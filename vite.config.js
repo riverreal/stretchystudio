@@ -33,6 +33,19 @@ const LAZY_ONLY_PACKAGES = [
   '/cmdk/',
 ];
 
+/**
+ * True when `id` is the npm package itself (pnpm or npm layout).
+ * Substring checks like `id.includes('/react-dom/')` also match
+ * `@floating-ui/react-dom`, which then lands in `vendor-react`,
+ * imports `@floating-ui/core` from `vendor`, and `vendor` imports
+ * React back — a circular ESM cycle. React is still undefined when
+ * `react-remove-scroll` evaluates `React.useLayoutEffect` at
+ * module scope, so the boot shell never unmounts.
+ */
+function isNodePackage(id, pkg) {
+  return id.includes(`/node_modules/${pkg}/`);
+}
+
 function chunkFor(id) {
   if (!id.includes('node_modules')) return undefined;
   for (const pkg of LAZY_ONLY_PACKAGES) {
@@ -41,7 +54,7 @@ function chunkFor(id) {
   if (id.includes('/@radix-ui/'))                     return 'vendor-radix';
   if (id.includes('/lucide-react/'))                  return 'vendor-lucide';
   if (id.includes('/zustand/') || id.includes('/immer/')) return 'vendor-state';
-  if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/scheduler/'))
+  if (isNodePackage(id, 'react') || isNodePackage(id, 'react-dom') || isNodePackage(id, 'scheduler'))
     return 'vendor-react';
   return 'vendor';
 }
