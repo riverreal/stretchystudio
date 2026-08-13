@@ -174,7 +174,7 @@ importers:
         specifier: ^3.23.8
         version: 3.25.76
       zustand:
-        specifier: 5.0.14
+        specifier: ^5.0.12
         version: 5.0.14(@types/react@18.3.26)(immer@11.1.16)(react@18.3.1)(use-sync-external-store@1.6.0(react@18.3.1))
     devDependencies:
       '@eslint/js':
