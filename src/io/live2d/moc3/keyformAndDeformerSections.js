@@ -12,11 +12,13 @@
  *   1. **Mesh keyform position emit** — for each mesh, frame-convert
  *      its rest-pose vertices to the parent deformer's local frame
  *      and append. Padded to 16 floats per keyform (Cubism alignment).
- *      Frame selection cascade:
+ *      Frame selection uses `resolveMeshDeformerParent` (same cascade
+ *      as `art_mesh.parent_deformer_indices`):
  *        - Per-mesh rig warp → 0..1 of rig warp's `canvasBbox`.
- *        - Group rotation deformer parent → raw canvas-px offsets
- *          from the group's pivot (NOT PPU-normalised; cubism stores
- *          arm values like (-38.9, -88.4) directly).
+ *        - Group rotation deformer parent (only when that
+ *          GroupRotation exists) → raw canvas-px offsets from the
+ *          group's pivot (NOT PPU-normalised; cubism stores arm
+ *          values like (-38.9, -88.4) directly).
  *        - BodyXWarp / chain root → `rigSpec.canvasToInnermostX/Y`.
  *        - Legacy fallback → centred + PPU-normalised.
  *
@@ -57,6 +59,11 @@
  * @module io/live2d/moc3/keyformAndDeformerSections
  */
 
+import {
+  resolveMeshDeformerParent,
+  encodeVertexInParentFrame,
+} from './meshDeformerParent.js';
+
 /**
  * @param {Object} opts
  * @param {Array<object>} opts.meshParts                - rig parts with mesh data, leaf-first.
@@ -95,36 +102,24 @@ export function emitKeyformAndDeformerSections(opts) {
   const ppu = Math.max(canvasW, canvasH);
   const originX = canvasW / 2;
   const originY = canvasH / 2;
-  const useDeformerFrame = !!(rigSpec && rigSpec.canvasToInnermostX && meshDefaultDeformerIdx >= 0);
 
-  // partId → rig warp spec (for per-mesh frame conversion).
-  const rigWarpByPartId = new Map();
-  if (rigSpec) {
-    for (const w of warpSpecs) {
-      if (w.targetPartId && w.canvasBbox) rigWarpByPartId.set(w.targetPartId, w);
-    }
-  }
-
-  // Resolve a mesh's owning group rotation deformer's pivot.
-  // Mirrors the parent_deformer_indices logic so frames match parent.
-  const groupRotationPivot = (part) => {
-    const jointBoneId = part.mesh?.jointBoneId;
-    if (jointBoneId && part.mesh?.boneWeights) {
-      const boneGroup = groups.find(g => g.id === jointBoneId);
-      const armGroupId = boneGroup?.parent;
-      if (armGroupId) {
-        const armGroup = groups.find(g => g.id === armGroupId);
-        if (armGroup?.transform) return { x: armGroup.transform.pivotX ?? 0, y: armGroup.transform.pivotY ?? 0 };
-      }
-    }
-    if (part.parent) {
-      const ownGroup = groups.find(g => g.id === part.parent);
-      if (ownGroup?.transform && rigSpec?.rotationDeformers?.some(r => r.id === `GroupRotation_${part.parent}`)) {
-        return { x: ownGroup.transform.pivotX ?? 0, y: ownGroup.transform.pivotY ?? 0 };
-      }
-    }
-    return null;
+  const parentCtx = {
+    warpSpecs, rotationSpecs, deformerIdToIndex, meshDefaultDeformerIdx, groups,
   };
+  const frameCtx = { rigSpec, canvasW, canvasH };
+
+  // Same cascade as art_mesh.parent_deformer_indices — one lookup per
+  // mesh so rest-pose verts and baked bone keyforms share a frame.
+  /** @type {ReturnType<typeof resolveMeshDeformerParent>[]} */
+  const meshParents = meshParts.map((part) => resolveMeshDeformerParent(part, parentCtx));
+
+  // partId → rig warp spec (kept for callers that still consume the
+  // returned map from the reparent step).
+  const rigWarpByPartId = new Map();
+  for (let i = 0; i < meshParts.length; i++) {
+    const rw = meshParents[i].rigWarp;
+    if (rw) rigWarpByPartId.set(meshParts[i].id, rw);
+  }
 
   // 16-float padding (Cubism keyform-block alignment).
   const padTo16 = (arr) => {
@@ -159,25 +154,13 @@ export function emitKeyformAndDeformerSections(opts) {
 
   // ── 1b. Mesh keyform_position append (per-vertex rest pose, frame-converted) ──
   const allKeyformPositions = [];
-  for (const part of meshParts) {
+  for (let mi = 0; mi < meshParts.length; mi++) {
+    const part = meshParts[mi];
     if (!part.mesh?.vertices) continue;
-    const rigWarp = rigWarpByPartId.get(part.id);
-    const rotPivot = !rigWarp ? groupRotationPivot(part) : null;
+    const resolved = meshParents[mi];
     for (const vert of part.mesh.vertices) {
-      if (rigWarp) {
-        const bb = rigWarp.canvasBbox;
-        allKeyformPositions.push((vert.x - bb.minX) / bb.W);
-        allKeyformPositions.push((vert.y - bb.minY) / bb.H);
-      } else if (rotPivot) {
-        allKeyformPositions.push(vert.x - rotPivot.x);
-        allKeyformPositions.push(vert.y - rotPivot.y);
-      } else if (useDeformerFrame) {
-        allKeyformPositions.push(rigSpec.canvasToInnermostX(vert.x));
-        allKeyformPositions.push(rigSpec.canvasToInnermostY(vert.y));
-      } else {
-        allKeyformPositions.push((vert.x - originX) / ppu);
-        allKeyformPositions.push((vert.y - originY) / ppu);
-      }
+      const [lx, ly] = encodeVertexInParentFrame(vert.x, vert.y, resolved, frameCtx);
+      allKeyformPositions.push(lx, ly);
     }
     padTo16(allKeyformPositions);
   }
@@ -292,29 +275,14 @@ export function emitKeyformAndDeformerSections(opts) {
 
   // ── 5. Bone keyform sentinel patch (extends allKeyformPositions) ──
   for (const append of bonePerKeyformAppends) {
-    const partIdx = append.partIndex;
-    const part = meshParts[partIdx];
-    const rigWarp = rigWarpByPartId.get(part.id);
-    const rotPivot = !rigWarp ? groupRotationPivot(part) : null;
+    const resolved = meshParents[append.partIndex];
     const offset = allKeyformPositions.length;
     flatKeyformPosBegin[append.flatIndex] = offset;
     for (let i = 0; i < append.positions.length; i += 2) {
-      const vx = append.positions[i];
-      const vy = append.positions[i + 1];
-      if (rigWarp) {
-        const bb = rigWarp.canvasBbox;
-        allKeyformPositions.push((vx - bb.minX) / bb.W);
-        allKeyformPositions.push((vy - bb.minY) / bb.H);
-      } else if (rotPivot) {
-        allKeyformPositions.push(vx - rotPivot.x);
-        allKeyformPositions.push(vy - rotPivot.y);
-      } else if (useDeformerFrame) {
-        allKeyformPositions.push(rigSpec.canvasToInnermostX(vx));
-        allKeyformPositions.push(rigSpec.canvasToInnermostY(vy));
-      } else {
-        allKeyformPositions.push((vx - originX) / ppu);
-        allKeyformPositions.push((vy - originY) / ppu);
-      }
+      const [lx, ly] = encodeVertexInParentFrame(
+        append.positions[i], append.positions[i + 1], resolved, frameCtx,
+      );
+      allKeyformPositions.push(lx, ly);
     }
     padTo16(allKeyformPositions);
   }

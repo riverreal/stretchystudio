@@ -175,5 +175,75 @@ function makeMesh(numVerts = 3) {
   assertEq(meshBindingPlan[0].keyformOpacities, [1, 1, 1, 1, 1], 'bone-baked → all 1');
 }
 
+// ─── Bone-baked stays when ParamRotation_<bone> is a live moc3 param ───
+
+{
+  const armBone = {
+    id: 'bone_arm', name: 'leftArm', type: 'group',
+    transform: { pivotX: 100, pivotY: 200 },
+  };
+  const armPart = {
+    id: 'arm_part', name: 'arm', type: 'part',
+    visible: true, opacity: 1,
+    mesh: { vertices: [{x:100,y:200},{x:150,y:200}], boneWeights: [1, 1], jointBoneId: 'bone_arm' },
+  };
+  const { meshBindingPlan } = buildMeshBindingPlan({
+    meshParts: [armPart],
+    groups: [armBone],
+    rigSpec: null,
+    bakedKeyformAngles: [-90, -45, 0, 45, 90],
+    backdropTagsSet: BACKDROP,
+    validParamIds: new Set(['ParamOpacity', 'ParamRotation_leftArm']),
+  });
+  assertEq(meshBindingPlan[0].paramId, 'ParamRotation_leftArm',
+    'live ParamRotation_leftArm → still bone-baked');
+  assertEq(meshBindingPlan[0].keyformOpacities, [1, 1, 1, 1, 1],
+    'live ParamRotation_leftArm → 5 keyforms');
+}
+
+// ─── Missing ParamRotation_<bone> → 5 rest keyforms (Elsa Unity rest-pose) ───
+//
+// Knee groups named `grp-<uuid>` produce ParamRotation_grp_…. Init Rig
+// only seeds ParamRotation_leftLeg / rightLeg. Keep 5 keyform slots
+// (same topology Cubism Core already accepted) but do not bake −90°.
+
+{
+  const knee = {
+    id: 'grp-ab99ef0ac308', name: 'grp-ab99ef0ac308', type: 'group',
+    transform: { pivotX: 100, pivotY: 200 },
+  };
+  const legwear = {
+    id: 'legwear_r', name: 'legwear_r', type: 'part',
+    visible: true, opacity: 1,
+    mesh: {
+      vertices: [{x:100,y:200},{x:150,y:200}],
+      boneWeights: [1, 1],
+      jointBoneId: 'grp-ab99ef0ac308',
+    },
+  };
+  const { meshBindingPlan } = buildMeshBindingPlan({
+    meshParts: [legwear],
+    groups: [knee],
+    rigSpec: null,
+    bakedKeyformAngles: [-90, -45, 0, 45, 90],
+    backdropTagsSet: BACKDROP,
+    validParamIds: new Set(['ParamOpacity', 'ParamRotation_leftLeg', 'ParamRotation_rightLeg']),
+  });
+  assertEq(meshBindingPlan[0].paramId, 'ParamRotation_grp_ab99ef0ac308',
+    'missing ParamRotation_grp_… → still names the bone param (binding will be dropped)');
+  assertEq(meshBindingPlan[0].keys, [-90, -45, 0, 45, 90],
+    'missing ParamRotation_grp_… → 5 keys (topology preserved)');
+  assertEq(meshBindingPlan[0].keyformOpacities, [1, 1, 1, 1, 1],
+    'missing ParamRotation_grp_… → 5 rest keyforms');
+  const restKfs = meshBindingPlan[0].perVertexPositions;
+  assert(Array.isArray(restKfs) && restKfs.length === 5,
+    'missing ParamRotation_grp_… → 5 position blocks (not shared rest begin)');
+  assert(restKfs[0][0] === 100 && restKfs[0][1] === 200
+    && restKfs[0][2] === 150 && restKfs[0][3] === 200,
+    'missing ParamRotation_grp_… → rest verts, not −90° bake');
+  assert(restKfs[4][0] === 100 && restKfs[4][1] === 200,
+    'missing ParamRotation_grp_… → last keyform also rest');
+}
+
 console.log(`meshBindingPlan: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

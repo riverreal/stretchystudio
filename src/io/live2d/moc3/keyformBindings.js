@@ -76,6 +76,13 @@ export function buildKeyformBindings(opts) {
   // bindings here so they never enter `uniqueBindings`. Objects that lose
   // their only binding fall back to band 0 (the null band) — same as
   // unbound parts.
+  //
+  // Empty band + N>1 keyforms is a Unity rest-pose trap: Cubism Core
+  // cannot interpolate them and displays keyform 0 (for bone bakes,
+  // the −90° pose unless `buildMeshBindingPlan` filled every slot
+  // with rest verts). Do not collapse those meshes onto ParamOpacity —
+  // that changes keyform counts / bands and Unity's csmHasMocConsistency
+  // rejects the moc3.
   const validParamIds = new Set(params.map((p) => p.id));
 
   /** @type {{paramId:string, keys:number[]}[]} */

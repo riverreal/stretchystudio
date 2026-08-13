@@ -214,6 +214,10 @@ function buildSectionData(input) {
   // --- Per-mesh keyform/binding plan ---
   // See moc3/meshBindingPlan.js for the per-mesh branch order
   // (bone-baked → eye closure → variant fade → base fade → default).
+  // Bone-baked 5-keyform branch: if `ParamRotation_<bone>` is missing
+  // from `params`, still emit 5 position blocks of rest verts so
+  // Cubism Core's empty-band "show keyform 0" path is the standing
+  // pose and csmHasMocConsistency sees unique keyform_position_begins.
   // Verified by binary diff against cubism native export of shelby.cmo3:
   //   ArtMesh10 (face = backdrop)            → 1 kf, ParamOpacity[1]
   //   ArtMesh9  (face_smile = variant)       → 2 kf, ParamSmile[0,1]
@@ -228,6 +232,7 @@ function buildSectionData(input) {
     meshParts, groups, rigSpec,
     bakedKeyformAngles,
     backdropTagsSet: BACKDROP_TAGS_SET_MOC3,
+    validParamIds: new Set(params.map((p) => p.id)),
   });
 
 

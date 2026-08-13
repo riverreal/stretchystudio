@@ -13,6 +13,13 @@
  *      Each angle in `bakedKeyformAngles` produces a rotated vertex array
  *      via the weighted blend `vertex * (1 - w) + rotated * w` against
  *      the bone group's pivot. Same math as cmo3 baked-keyform emission.
+ *      If `ParamRotation_<bone>` is missing from the live parameter list
+ *      (native-rig path never synthesizes the joint's param), Cubism
+ *      Core drops the binding and the mesh lands on the empty band,
+ *      which always displays keyform 0. In that case we still emit 5
+ *      slots (same topology the SDK already accepted) but fill them
+ *      with *copies of* rest verts so keyform 0 is the standing pose
+ *      and each keyform has a unique position-block offset.
  *
  *   2. **Mesh-level eye closure** — 2 keyforms on `ParamEye{L,R}Open`
  *      with closed-eye vertex positions at key=0 and rest at key=1.
@@ -76,6 +83,11 @@ import { buildVariantProductGridCorners, buildEyeCompoundBaseGridCorners } from 
  *   to resolve the part's structural-parent bone for the rigid-intent
  *   guard). When omitted, the bone-baked branch reads `mesh.boneWeights`
  *   raw — used only by tests that don't carry a project.
+ * @param {Set<string>} [opts.validParamIds]
+ *   Live parameter ids that will be written into the moc3. When set and
+ *   `ParamRotation_<bone>` is absent, the 5-keyform branch still runs
+ *   but writes rest verts into every slot (each with its own position
+ *   block — Cubism Core rejects duplicated keyform_position_begins).
  * @returns {{
  *   meshBindingPlan: MeshBindingPlanEntry[],
  *   meshKeyformBeginIndex: number[],
@@ -84,7 +96,7 @@ import { buildVariantProductGridCorners, buildEyeCompoundBaseGridCorners } from 
  * }}
  */
 export function buildMeshBindingPlan(opts) {
-  const { meshParts, groups, rigSpec, bakedKeyformAngles, backdropTagsSet } = opts;
+  const { meshParts, groups, rigSpec, bakedKeyformAngles, backdropTagsSet, validParamIds } = opts;
   // 2026-05-09 (afternoon): Cubism Adapter strip removed when the
   // adapter pattern was reverted toward Blender parity (see
   // `docs/plans/CUBISM_ADAPTER_REVERT_BLENDER_PARITY.md`). Post-revert
@@ -119,9 +131,36 @@ export function buildMeshBindingPlan(opts) {
     // blends correctly at slider=0), but the FADE ENDPOINT at slider=1
     // must be 1.0 — same authored peak as cmo3 ships.
     if (boneWeights && jointBoneId) {
-      // Bone-baked keyforms.
+      // Bone-baked keyforms. Cubism Core drops bindings whose paramId is
+      // not in `parameters[]`, and an empty band always displays keyform 0.
+      // Elsa's legwear/footwear hit this: skinned to uuid-named knee groups
+      // (`ParamRotation_grp_…`) while Init Rig only seeded
+      // `ParamRotation_leftLeg` / `rightLeg`. Keep the 5-slot topology
+      // (collapsing onto ParamOpacity made Unity's csmHasMocConsistency
+      // reject the moc3) but skip the angle bake so kf[0] is rest, not −90°.
       const boneGroup = groups.find(g => g.id === jointBoneId);
       const sanitizedBoneName = sanitisePartName(boneGroup?.name ?? jointBoneId);
+      const boneParamId = `ParamRotation_${sanitizedBoneName}`;
+      const paramIsLive = !validParamIds || validParamIds.has(boneParamId);
+      if (!paramIsLive) {
+        // Cubism Core requires a unique keyform_position_begin per
+        // keyform. Sharing the rest block (perVertexPositions=null)
+        // makes all 5 begins identical → csmHasMocConsistency fails.
+        // Append 5 copies of rest verts so kf[0] is standing and the
+        // layout matches the previously-accepted bone-bake topology.
+        const verts = mesh.vertices;
+        const rest = new Float32Array(verts.length * 2);
+        for (let i = 0; i < verts.length; i++) {
+          rest[i * 2]     = verts[i].x;
+          rest[i * 2 + 1] = verts[i].y;
+        }
+        return {
+          paramId: boneParamId,
+          keys: BONE_KEYFORM_ANGLES.slice(),
+          keyformOpacities: BONE_KEYFORM_ANGLES.map(() => 1),
+          perVertexPositions: BONE_KEYFORM_ANGLES.map(() => rest),
+        };
+      }
       const pivotX = boneGroup?.transform?.pivotX ?? 0;
       const pivotY = boneGroup?.transform?.pivotY ?? 0;
       const verts = mesh.vertices;
@@ -142,7 +181,7 @@ export function buildMeshBindingPlan(opts) {
         return out;
       });
       return {
-        paramId: `ParamRotation_${sanitizedBoneName}`,
+        paramId: boneParamId,
         keys: BONE_KEYFORM_ANGLES.slice(),
         keyformOpacities: BONE_KEYFORM_ANGLES.map(() => 1),
         perVertexPositions: perKeyformPositions,
