@@ -12,7 +12,13 @@
 //
 // Run: node scripts/test/test_bakePhysics.mjs
 
-import { bakePhysics, applyBakePhysics } from '../../src/v3/operators/bakePhysics.js';
+import {
+  bakePhysics,
+  applyBakePhysics,
+  applyBakePhysicsTuning,
+  normalizeBakePhysicsTuning,
+  resetLastBakePhysicsTuning,
+} from '../../src/v3/operators/bakePhysics.js';
 
 let pass = 0;
 let fail = 0;
@@ -241,6 +247,119 @@ function makeProject({ inputKeyforms, outputKeyforms = null }) {
   const project = makeProject({ inputKeyforms: [{ time: 0, value: 0 }] });
   const result = applyBakePhysics(project, 'no-such-action', {});
   ok(result === null, '§7 — null on unknown actionId');
+}
+
+// ── §8 — bake-time wiggle / lag / per-output (clone, don't mutate) ───
+
+{
+  resetLastBakePhysicsTuning();
+  const inputKeyforms = [
+    { time: 0, value: 10, interpolation: 'linear' },
+    { time: 1000, value: 10, interpolation: 'linear' },
+  ];
+  const opts = { frameStartMs: 0, frameEndMs: 1000, stepMs: 1000 / 24, preRollMs: 500 };
+
+  const projectA = makeProject({ inputKeyforms });
+  const projectB = makeProject({ inputKeyforms });
+  const identity = bakePhysics(projectA.actions[0], projectA, opts);
+  const wiggle2 = bakePhysics(projectB.actions[0], projectB, { ...opts, wiggle: 2 });
+
+  const maxAbs = (records) => records.reduce((m, r) => Math.max(m, Math.abs(r.value)), 0);
+  const a = maxAbs(identity.records);
+  const b = maxAbs(wiggle2.records);
+  ok(b > a * 1.5, `§8 — wiggle 2 produces larger |output| than identity (${b.toFixed(3)} > ${a.toFixed(3)}×1.5)`);
+
+  // Identity options (omitted vs explicit 1/1/{}) must match today's bake.
+  const projectC = makeProject({ inputKeyforms });
+  const explicit = bakePhysics(projectC.actions[0], projectC, { ...opts, wiggle: 1, lag: 1, outputStrength: {} });
+  ok(identity.records.length === explicit.records.length, '§8 — identity sample count matches explicit 1/1');
+  let identMatch = identity.records.length > 0;
+  for (let i = 0; i < identity.records.length; i++) {
+    if (Math.abs(identity.records[i].value - explicit.records[i].value) > 1e-12) {
+      identMatch = false;
+      break;
+    }
+  }
+  ok(identMatch, '§8 — omitted tuning matches explicit identity (1/1/{})');
+}
+
+{
+  const project = makeProject({
+    inputKeyforms: [
+      { time: 0, value: 10, interpolation: 'linear' },
+      { time: 1000, value: 10, interpolation: 'linear' },
+    ],
+  });
+  const origScale = project.nodes[0].modifiers[0].output.scale;
+  const origDelay = project.nodes[0].modifiers[0].vertices[1].delay;
+  applyBakePhysics(project, 'act-A', {
+    frameStartMs: 0, frameEndMs: 1000, stepMs: 1000 / 24, preRollMs: 100,
+    wiggle: 3, lag: 2, outputStrength: { ParamHairFront: 2 },
+  });
+  ok(project.nodes[0].modifiers[0].output.scale === origScale,
+    `§8 — project modifier scale unchanged after bake (still ${origScale})`);
+  ok(project.nodes[0].modifiers[0].vertices[1].delay === origDelay,
+    `§8 — project modifier delay unchanged after bake (still ${origDelay})`);
+}
+
+{
+  const project = makeProject({
+    inputKeyforms: [
+      { time: 0, value: 10, interpolation: 'linear' },
+      { time: 1000, value: 10, interpolation: 'linear' },
+    ],
+  });
+  const muted = bakePhysics(project.actions[0], project, {
+    frameStartMs: 0, frameEndMs: 1000, stepMs: 1000 / 24, preRollMs: 500,
+    outputStrength: { ParamHairFront: 0 },
+  });
+  const anyNonZero = muted.records.some((r) => Math.abs(r.value) > 1e-9);
+  ok(!anyNonZero, '§8 — outputStrength[id]=0 mutes that output');
+}
+
+{
+  const rules = [{
+    id: 'rule-hair',
+    vertices: [
+      { x: 0, y: 0, delay: 0 },
+      { x: 0, y: 0, delay: 0.5 },
+    ],
+    outputs: [{ paramId: 'ParamHairFront', scale: 1.5 }],
+  }];
+  const snapshot = JSON.stringify(rules);
+  const tuned = applyBakePhysicsTuning(rules, {
+    wiggle: 2,
+    lag: 2,
+    outputStrength: { ParamHairFront: 0.5 },
+  });
+  ok(JSON.stringify(rules) === snapshot, '§8 — applyBakePhysicsTuning does not mutate input rules');
+  ok(tuned !== rules, '§8 — applyBakePhysicsTuning returns a new array');
+  ok(tuned[0].outputs[0].scale === 1.5 * 2 * 0.5,
+    `§8 — composed scale = authored × wiggle × strength (got ${tuned[0].outputs[0].scale})`);
+  ok(tuned[0].vertices[1].delay === 1,
+    `§8 — lag multiplies vertex delay (got ${tuned[0].vertices[1].delay})`);
+  ok(rules[0].outputs[0].scale === 1.5, '§8 — original output.scale still 1.5');
+  ok(rules[0].vertices[1].delay === 0.5, '§8 — original vertex.delay still 0.5');
+}
+
+{
+  let threw = false;
+  try { normalizeBakePhysicsTuning({ wiggle: Number.NaN }); }
+  catch { threw = true; }
+  ok(threw, '§8 — non-finite wiggle throws');
+}
+{
+  let threw = false;
+  try { normalizeBakePhysicsTuning({ wiggle: Infinity }); }
+  catch { threw = true; }
+  ok(threw, '§8 — Infinity wiggle throws');
+}
+{
+  const project = makeProject({ inputKeyforms: [{ time: 0, value: 0 }] });
+  let threw = false;
+  try { bakePhysics(project.actions[0], project, { wiggle: Number.NaN }); }
+  catch { threw = true; }
+  ok(threw, '§8 — bakePhysics throws on invalid non-finite wiggle');
 }
 
 console.log(`bakePhysics: ${pass} passed, ${fail} failed`);

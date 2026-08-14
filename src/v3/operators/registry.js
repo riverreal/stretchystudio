@@ -44,7 +44,7 @@ import { cutMeshAlongLine } from './edit/knife.js';
 import { subdivide } from './edit/subdivide.js';
 import { extrude, countSelectedBoundary } from './edit/extrude.js';
 import { autoSkinAllParts } from '../../io/live2d/rig/autoSkinning.js';
-import { applyBakePhysics } from './bakePhysics.js';
+import { applyBakePhysics, getLastBakePhysicsTuning, setLastBakePhysicsTuning } from './bakePhysics.js';
 import { getActiveSceneAction } from '../../anim/sceneAction.js';
 import { logger } from '../../lib/logger.js';
 
@@ -278,7 +278,7 @@ function registerBuiltins() {
       const active = getActiveSceneAction(proj, useAnimationStore.getState().activeActionId);
       return !!active;
     },
-    exec: () => {
+    exec: (ctx = {}) => {
       const proj = useProjectStore.getState().project;
       if (!proj) {
         toast({ title: 'No project', description: 'Open or create a project first.' });
@@ -287,6 +287,19 @@ function registerBuiltins() {
       const active = getActiveSceneAction(proj, useAnimationStore.getState().activeActionId);
       if (!active) {
         toast({ title: 'No active action', description: 'Select an action to bake into.' });
+        return;
+      }
+      // Dialog passes `ctx.bakePhysics`; Shift-click / command palette
+      // reuse the last session-sticky tuning (identity the first time).
+      let tuning;
+      try {
+        tuning = setLastBakePhysicsTuning(ctx.bakePhysics ?? getLastBakePhysicsTuning());
+      } catch (err) {
+        toast({
+          title: 'Invalid bake settings',
+          description: err instanceof Error ? err.message : String(err),
+          variant: 'destructive',
+        });
         return;
       }
       const t0 = Date.now();
@@ -299,6 +312,9 @@ function registerBuiltins() {
             : (typeof active.duration === 'number' ? active.duration : 2000),
           stepMs: 1000 / (typeof active.fps === 'number' && active.fps > 0 ? active.fps : 24),
           preRollMs: 500,
+          wiggle: tuning.wiggle,
+          lag: tuning.lag,
+          outputStrength: tuning.outputStrength,
         });
       });
       if (!bakeResult) {

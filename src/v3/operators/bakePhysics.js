@@ -90,6 +90,165 @@ import { sanitisePartName } from '../../lib/partId.js';
 import { getBoneRole } from '../../store/objectDataAccess.js';
 
 /**
+ * @typedef {Object} BakePhysicsTuning
+ * @property {number} [wiggle=1]  Global output-scale multiplier.
+ * @property {number} [lag=1]     Pendulum delay multiplier (bounce).
+ * @property {Record<string, number>} [outputStrength]  Per-output
+ *   paramId multiplier, composed with `wiggle`. Missing keys = 1.
+ */
+
+const DEFAULT_TUNING = Object.freeze({ wiggle: 1, lag: 1, outputStrength: Object.freeze({}) });
+
+/** Session-sticky last dialog / operator tuning. Clone on read. */
+let _lastTuning = { wiggle: 1, lag: 1, outputStrength: {} };
+
+/** @type {Readonly<Record<string, string>>} */
+const KNOWN_OUTPUT_LABELS = Object.freeze({
+  ParamHairFront: 'Hair Front',
+  ParamHairBack: 'Hair Back',
+  ParamSkirt: 'Skirt',
+  ParamShirt: 'Shirt',
+  ParamPants: 'Pants',
+  ParamBust: 'Bust',
+});
+
+/**
+ * Clamp a finite multiplier. `undefined`/`null`/'' → fallback.
+ * Non-finite provided values throw (Rule №1).
+ *
+ * @param {unknown} v
+ * @param {number} fallback
+ * @param {number} min
+ * @param {number} max
+ * @param {string} label
+ * @returns {number}
+ */
+function sanitizeMul(v, fallback, min, max, label) {
+  if (v === undefined || v === null || v === '') return fallback;
+  const n = Number(v);
+  if (!Number.isFinite(n)) {
+    throw new Error(`bakePhysics: invalid ${label} ${String(v)} (must be a finite number)`);
+  }
+  return Math.max(min, Math.min(max, n));
+}
+
+/**
+ * Normalise bake-time exaggeration. Identity (`1 / 1 / {}`) leaves
+ * authored physics modifiers unchanged. Does not mutate `raw`.
+ *
+ * @param {BakePhysicsTuning} [raw]
+ * @returns {{wiggle: number, lag: number, outputStrength: Record<string, number>}}
+ */
+export function normalizeBakePhysicsTuning(raw = {}) {
+  const wiggle = sanitizeMul(raw.wiggle, 1, 0.05, 8, 'wiggle');
+  const lag = sanitizeMul(raw.lag, 1, 0.25, 3, 'lag');
+  /** @type {Record<string, number>} */
+  const outputStrength = {};
+  if (raw.outputStrength && typeof raw.outputStrength === 'object') {
+    for (const [k, v] of Object.entries(raw.outputStrength)) {
+      if (typeof k !== 'string' || k.length === 0) continue;
+      outputStrength[k] = sanitizeMul(v, 1, 0, 8, `outputStrength.${k}`);
+    }
+  }
+  return { wiggle, lag, outputStrength };
+}
+
+/** @returns {{wiggle: number, lag: number, outputStrength: Record<string, number>}} */
+export function getLastBakePhysicsTuning() {
+  return {
+    wiggle: _lastTuning.wiggle,
+    lag: _lastTuning.lag,
+    outputStrength: { ..._lastTuning.outputStrength },
+  };
+}
+
+/**
+ * @param {BakePhysicsTuning} [tuning]
+ * @returns {{wiggle: number, lag: number, outputStrength: Record<string, number>}}
+ */
+export function setLastBakePhysicsTuning(tuning) {
+  _lastTuning = normalizeBakePhysicsTuning(tuning);
+  return getLastBakePhysicsTuning();
+}
+
+/** Test-only: restore identity defaults. */
+export function resetLastBakePhysicsTuning() {
+  _lastTuning = {
+    wiggle: DEFAULT_TUNING.wiggle,
+    lag: DEFAULT_TUNING.lag,
+    outputStrength: { ...DEFAULT_TUNING.outputStrength },
+  };
+}
+
+/**
+ * Human label for a physics output param.
+ *
+ * @param {string} paramId
+ * @param {string} [ruleName]
+ * @returns {string}
+ */
+export function bakeTargetLabel(paramId, ruleName) {
+  if (KNOWN_OUTPUT_LABELS[paramId]) return KNOWN_OUTPUT_LABELS[paramId];
+  const rot = typeof paramId === 'string' ? paramId.match(/^ParamRotation_(.+)$/) : null;
+  if (rot) return rot[1];
+  return ruleName || paramId;
+}
+
+/**
+ * Enabled physics outputs on this project, one row per paramId.
+ * Dialog source of truth — empty when nothing is seeded.
+ *
+ * @param {object} project
+ * @returns {Array<{paramId: string, name: string, category: string, label: string, scale: number}>}
+ */
+export function listPhysicsBakeTargets(project) {
+  const rules = gatherPhysicsRules(project) ?? [];
+  /** @type {Array<{paramId: string, name: string, category: string, label: string, scale: number}>} */
+  const out = [];
+  const seen = new Set();
+  for (const rule of rules) {
+    for (const o of rule.outputs ?? []) {
+      if (!o?.paramId || typeof o.paramId !== 'string' || seen.has(o.paramId)) continue;
+      seen.add(o.paramId);
+      out.push({
+        paramId: o.paramId,
+        name: rule.name ?? rule.id ?? o.paramId,
+        category: rule.category ?? 'other',
+        label: bakeTargetLabel(o.paramId, rule.name),
+        scale: typeof o.scale === 'number' ? o.scale : 1,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Clone gathered rules with bake-time wiggle / lag / per-output
+ * strength applied. Never mutates `rules` or project modifiers —
+ * exaggeration lives only in this bake's fcurves.
+ *
+ * @param {Array<object>} rules
+ * @param {BakePhysicsTuning} [tuning]
+ * @returns {Array<object>}
+ */
+export function applyBakePhysicsTuning(rules, tuning) {
+  const t = normalizeBakePhysicsTuning(tuning);
+  if (!Array.isArray(rules) || rules.length === 0) return [];
+  return rules.map((rule) => ({
+    ...rule,
+    vertices: (rule.vertices ?? []).map((v) => {
+      const delay = typeof v.delay === 'number' ? v.delay : 0;
+      return { ...v, delay: Math.max(0, Math.min(3, delay * t.lag)) };
+    }),
+    outputs: (rule.outputs ?? []).map((o) => {
+      const per = t.outputStrength[o.paramId] ?? 1;
+      const scale = typeof o.scale === 'number' ? o.scale : 1;
+      return { ...o, scale: scale * t.wiggle * per };
+    }),
+  }));
+}
+
+/**
  * Resolve `ParamRotation_<sanitized>` → bone node id.
  *
  * Why this exists: bone physics outputs are stored as `ParamRotation_*`
@@ -155,6 +314,13 @@ function rnaPathForBakedOutput(project, paramId) {
  *   Integrates the chain at the input-at-frameStart for this many ms
  *   without writing anything, so the recorded curves don't start with
  *   a "spring releases from rest" transient. Set to 0 to skip.
+ * @property {number} [wiggle=1]        - Global output-scale multiplier.
+ *   Applied to a CLONE of the gathered rules; project modifiers stay
+ *   at authored scale. Identity = 1.
+ * @property {number} [lag=1]           - Pendulum delay multiplier.
+ *   >1 = more bounce/lag. Identity = 1.
+ * @property {Record<string, number>} [outputStrength] - Per-output
+ *   paramId multiplier, composed with `wiggle`. Missing keys = 1.
  */
 
 /**
@@ -230,10 +396,17 @@ export function bakePhysics(action, project, options = {}) {
     throw new Error(`bakePhysics: frameEndMs (${frameEndMs}) < frameStartMs (${frameStartMs})`);
   }
 
-  const rules = gatherPhysicsRules(project) ?? [];
-  if (rules.length === 0) {
+  const authoredRules = gatherPhysicsRules(project) ?? [];
+  if (authoredRules.length === 0) {
     return { records: [], outputParamIds: [], sampleCount: 0, ruleCount: 0 };
   }
+  // Bake-time exaggeration is a CLONE — never write back to
+  // `physicsModifier.output.scale` / vertex delay on the project.
+  const rules = applyBakePhysicsTuning(authoredRules, {
+    wiggle: options.wiggle,
+    lag: options.lag,
+    outputStrength: options.outputStrength,
+  });
 
   const paramSpecs = buildParamSpecs(project.parameters ?? []);
   const state = createPhysicsState(rules);

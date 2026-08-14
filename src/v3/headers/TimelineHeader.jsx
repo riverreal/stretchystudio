@@ -40,12 +40,13 @@
  * @module v3/headers/TimelineHeader
  */
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Clock, ChevronDown, Wind } from 'lucide-react';
 import { useProjectStore } from '../../store/projectStore.js';
 import { useAnimationStore } from '../../store/animationStore.js';
 import { getActiveSceneAction } from '../../anim/sceneAction.js';
 import { makeHeaderOperators } from './headerOperators.js';
+import { BakePhysicsDialog } from '../editors/actions/BakePhysicsDialog.jsx';
 import * as DropdownImpl from '../../components/ui/dropdown-menu.jsx';
 
 /** @type {Record<string, React.ComponentType<any>>} */
@@ -60,6 +61,7 @@ const {
 const { runOperator, isAvailable } = makeHeaderOperators('timeline');
 
 export function TimelineHeader() {
+  const [showBakePhysics, setShowBakePhysics] = useState(false);
   const project = useProjectStore((s) => s.project);
   const activeActionId = useAnimationStore((s) => s.activeActionId);
   const startFrame = useAnimationStore((s) => s.startFrame);
@@ -97,8 +99,13 @@ export function TimelineHeader() {
       <button
         type="button"
         disabled={!isAvailable('anim.bakePhysics')}
-        onClick={() => runOperator('anim.bakePhysics')}
-        title="Step the physics simulation through this action's input curves and write the hair/clothing/sway output as fcurves on the same action."
+        onClick={(e) => {
+          // Shift-click re-bakes with last dialog settings (identity
+          // the first time). Plain click opens the strength dialog.
+          if (e.shiftKey) runOperator('anim.bakePhysics');
+          else setShowBakePhysics(true);
+        }}
+        title="Bake physics onto this action. Opens a strength dialog; Shift-click re-bakes with last settings."
         className="px-1.5 py-0.5 rounded-sm hover:bg-background/60
                    focus:outline-none focus-visible:ring-1 focus-visible:ring-ring/60
                    flex items-center gap-1 text-foreground/80
@@ -107,6 +114,7 @@ export function TimelineHeader() {
         <Wind size={11} />
         Bake Physics
       </button>
+      <BakePhysicsDialog open={showBakePhysics} onOpenChange={setShowBakePhysics} />
 
       {/* View menu — Blender's TIMELINE-mode menu set (View + Marker; Marker deferred). */}
       <DropdownMenu>
