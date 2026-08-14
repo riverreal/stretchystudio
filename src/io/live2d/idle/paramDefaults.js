@@ -43,10 +43,13 @@ const r = (id) => RANGES[id];
 
 // ─── Preset: idle ───────────────────────────────────────────────────────────
 // The default rest motion. Wandering head, gentle body sway, breath, blinks.
+// Head-angle amplitudes are kept small: FaceParallax rides ParamAngleX/Y
+// while NeckWarp only follows ParamAngleZ, so large yaw/pitch opens a
+// chin–neck gap. Tired (0.6×) still showed the gap at the old ±12/±7/±6.
 export const IDLE_PARAMS = {
-  ParamAngleX:     { ...r('ParamAngleX'),     kind: 'wander',   cfg: { amplitude: 12, harmonics: 3, mid: 0, samples: 24 } },
-  ParamAngleY:     { ...r('ParamAngleY'),     kind: 'wander',   cfg: { amplitude: 7,  harmonics: 3, mid: 0, samples: 24 } },
-  ParamAngleZ:     { ...r('ParamAngleZ'),     kind: 'wander',   cfg: { amplitude: 6,  harmonics: 2, mid: 0, samples: 20 } },
+  ParamAngleX:     { ...r('ParamAngleX'),     kind: 'wander',   cfg: { amplitude: 5,  harmonics: 3, mid: 0, samples: 24 } },
+  ParamAngleY:     { ...r('ParamAngleY'),     kind: 'wander',   cfg: { amplitude: 3.5, harmonics: 3, mid: 0, samples: 24 } },
+  ParamAngleZ:     { ...r('ParamAngleZ'),     kind: 'wander',   cfg: { amplitude: 3,  harmonics: 2, mid: 0, samples: 20 } },
   ParamBodyAngleX: { ...r('ParamBodyAngleX'), kind: 'sine',     cfg: { amplitude: 2.5, period: 6500, phase: 0 } },
   ParamBodyAngleY: { ...r('ParamBodyAngleY'), kind: 'sine',     cfg: { amplitude: 1.8, period: 5500, phase: 0 } },
   ParamBodyAngleZ: { ...r('ParamBodyAngleZ'), kind: 'sine',     cfg: { amplitude: 2.5, period: 4500, phase: 0 } },
