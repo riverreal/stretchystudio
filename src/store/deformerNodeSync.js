@@ -520,14 +520,23 @@ export function synthesizeModifierStacks(project) {
     // (objectId/deformerId; type-agnostic so a warp→lattice flip keeps the
     // flag) and carry `enabled`/`mode`/`showInEditor` forward via `_flags`.
     const priorFlags = new Map();
+    /** @type {object|null} */
+    let priorArmature = null;
     if (Array.isArray(part.modifiers)) {
       for (const m of part.modifiers) {
+        if (m && m.type === 'armature') priorArmature = m;
         const rid = m && (m.type === 'lattice' ? m.objectId : m.deformerId);
         if (typeof rid === 'string' && rid.length > 0) {
           priorFlags.set(rid, { enabled: m.enabled, mode: m.mode, showInEditor: m.showInEditor });
         }
       }
     }
+    const priorArmJoint = (typeof priorArmature?.data?.jointBoneId === 'string'
+        && priorArmature.data.jointBoneId.length > 0)
+      ? priorArmature.data.jointBoneId
+      : (typeof priorArmature?.deformerId === 'string' && priorArmature.deformerId.length > 0
+          ? priorArmature.deformerId
+          : null);
     const _flags = (refId) => {
       const p = priorFlags.get(refId);
       return {
@@ -589,10 +598,19 @@ export function synthesizeModifierStacks(project) {
     // the body-warp Lattice modifiers that actually deform them omitted
     // (the original "legwear has no warp modifier" discoverability gap).
     const partMeshA = getMesh(part, project);
+    // Manual "Add Modifier → Armature" used to write only the modifier
+    // row. Copy that joint onto the mesh so the bone-baked / armature
+    // emit paths below see it (otherwise Init Rig deletes the row).
+    if (partMeshA && priorArmJoint
+        && (typeof partMeshA.jointBoneId !== 'string' || partMeshA.jointBoneId.length === 0)) {
+      partMeshA.jointBoneId = priorArmJoint;
+    }
     const partIsBoneBaked = Array.isArray(partMeshA?.boneWeights)
       && partMeshA.boneWeights.length > 0
       && typeof partMeshA?.jointBoneId === 'string';
-    if (!cur && partIsBoneBaked) {
+    // Armature-only stacks (no weights yet) still ride the body-warp
+    // chain — otherwise Initialize Rig leaves extras/objects empty.
+    if (!cur && (partIsBoneBaked || priorArmJoint)) {
       if (_innermostBodyWarpIdCache === undefined) {
         _innermostBodyWarpIdCache = findInnermostBodyWarpId(
           nodesArr.filter(isWarpLatticeNode),
@@ -685,10 +703,14 @@ export function synthesizeModifierStacks(project) {
     // Pre-fix every bone-baked v18 part would have a stack WITHOUT the
     // Armature entry — the LBS post-chain skin pass wouldn't run.
     const mesh = getMesh(part, project);
-    const jointBoneId = typeof mesh?.jointBoneId === 'string' && mesh.jointBoneId.length > 0
-      ? mesh.jointBoneId : null;
+    const jointBoneId = (typeof mesh?.jointBoneId === 'string' && mesh.jointBoneId.length > 0)
+      ? mesh.jointBoneId
+      : priorArmJoint;
     const boneWeights = Array.isArray(mesh?.boneWeights) ? mesh.boneWeights : null;
-    if (jointBoneId && boneWeights && boneWeights.length > 0) {
+    const hasWeights = !!(boneWeights && boneWeights.length > 0);
+    // Re-emit when the mesh is bone-weighted OR the user already added
+    // an Armature modifier (modifier-only bind must survive Init Rig).
+    if (jointBoneId && (hasWeights || priorArmature)) {
       const jointBone = byId.get(jointBoneId);
       if (jointBone && jointBone.type === 'group' && jointBone.boneRole) {
         // Walk to nearest bone-group ancestor (the parent bone in the

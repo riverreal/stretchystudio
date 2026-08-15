@@ -237,5 +237,45 @@ function assert(cond, name) {
   assert(beforeWarpAParent === afterWarpAParent, 'Test 8: deformer parent chain unchanged after round-trip');
 }
 
+// ── Test 9: armature-only stack (no mesh weights) survives rebuild ─
+// User: Add Modifier → Armature on extras/objects, then Initialize Rig.
+// Pre-fix the synth required mesh.boneWeights + jointBoneId and wiped
+// the modifier-only row, leaving an empty stack.
+
+{
+  const project = {
+    nodes: [
+      { id: 'torso', type: 'group', boneRole: 'torso', parent: 'root',
+        transform: { pivotX: 0, pivotY: 0 }, pose: {} },
+      { id: 'root', type: 'group', boneRole: 'root',
+        transform: { pivotX: 0, pivotY: 0 }, pose: {} },
+      { id: 'BodyXWarp', type: 'object', objectKind: 'lattice', parent: 'BreathWarp',
+        name: 'BodyXWarp' },
+      { id: 'BreathWarp', type: 'object', objectKind: 'lattice', parent: null,
+        name: 'BreathWarp' },
+      {
+        id: 'objects', type: 'part', name: 'objects', parent: 'torso',
+        modifiers: [
+          { type: 'armature', deformerId: 'torso', enabled: true, mode: 3,
+            data: { jointBoneId: 'torso', jointBoneRole: 'torso', parentBoneId: 'root' } },
+        ],
+        mesh: { vertices: [{ x: 10, y: 20 }, { x: 11, y: 21 }] },
+      },
+    ],
+  };
+  synthesizeModifierStacks(project);
+  const part = project.nodes.find((n) => n.id === 'objects');
+  const stack = part.modifiers ?? [];
+  assert(stack.some((m) => m?.type === 'armature'),
+    'Test 9: Armature modifier survives rebuild without pre-existing mesh weights');
+  const arm = stack.find((m) => m?.type === 'armature');
+  assert(arm?.data?.jointBoneId === 'torso',
+    `Test 9: rebuilt Armature still targets torso (got ${arm?.data?.jointBoneId})`);
+  assert(part.mesh.jointBoneId === 'torso',
+    'Test 9: jointBoneId copied from the prior Armature onto the mesh');
+  assert(stack.some((m) => m?.type === 'lattice' && m?.objectId === 'BodyXWarp'),
+    'Test 9: body-warp lattice seeded from the Armature bind');
+}
+
 console.log(`\narmatureModifier: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

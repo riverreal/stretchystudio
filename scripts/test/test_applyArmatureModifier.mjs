@@ -257,12 +257,13 @@ function setupArmedHandwear() {
   assert(result.reason === 'already-bound', 'Test 9: reason=already-bound');
 }
 
-// ── Test 10: bind on a rigid-follow part adds empty modifier ──────────
-// 2026-05-09 (afternoon) — Cubism Adapter revert. Adding an Armature
-// modifier to a mesh without vertex groups is legal (mirrors Blender's
-// "Add Modifier → Armature" UX). The modifier resolves jointBoneId
-// from the part's nearest bone-group ancestor; the mesh continues
-// to rigid-follow via the overlay path until the user paints weights.
+// ── Test 10: bind on a rigid-follow part persists mesh binding ────────
+// Adding an Armature modifier to a mesh without vertex groups is legal
+// (mirrors Blender's "Add Modifier → Armature" UX). The modifier
+// resolves jointBoneId from the part's nearest bone-group ancestor
+// AND writes that bind onto the mesh (jointBoneId + rigid-1.0
+// weights) so Initialize Rig's synthesizeModifierStacks can re-emit
+// the row instead of wiping it.
 
 {
   setupArmedHandwear();
@@ -275,7 +276,7 @@ function setupArmedHandwear() {
     delete part.mesh.jointBoneId;
   });
   const result = bindArmatureModifier('handwear-l');
-  assert(result.bound === true, 'Test 10: rigid-follow part + bind → bound=true (empty modifier)');
+  assert(result.bound === true, 'Test 10: rigid-follow part + bind → bound=true');
   // handwear-l.parent is leftArm (a bone) — walked via ancestor chain.
   assert(result.jointBoneId === 'leftArm',
     `Test 10: jointBoneId resolved to nearest bone ancestor (got ${result.jointBoneId})`);
@@ -285,6 +286,10 @@ function setupArmedHandwear() {
   assert(!!arm, 'Test 10: Armature modifier added');
   assert(arm.data.jointBoneId === 'leftArm',
     `Test 10: modifier.data.jointBoneId === 'leftArm' (got ${arm.data.jointBoneId})`);
+  assert(after.mesh.jointBoneId === 'leftArm',
+    `Test 10: mesh.jointBoneId persisted (got ${after.mesh.jointBoneId})`);
+  assert(Array.isArray(after.mesh.boneWeights) && after.mesh.boneWeights.length === after.mesh.vertices.length,
+    'Test 10: rigid-1.0 boneWeights written so Init Rig keeps the bind');
 }
 
 // ── Test 10b: bind fails when there's no bone-group ancestor ──────────

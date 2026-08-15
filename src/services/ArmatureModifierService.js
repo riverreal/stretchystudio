@@ -408,6 +408,12 @@ export function applyArmatureModifier(partId) {
  * If neither resolves (no bone ancestor), the operator fails — there's
  * no armature to bind to.
  *
+ * Also persists `mesh.jointBoneId` and, when the mesh has no vertex
+ * groups yet, writes rigid-1.0 `boneWeights`. Init Rig's
+ * `synthesizeModifierStacks` rebuilds the stack from those mesh
+ * fields — a modifier-only bind was wiped on the next Initialize
+ * Rig (empty stack, objects stopped following).
+ *
  * Idempotent: returns `{bound: false, reason: 'already-bound'}` when
  * an Armature modifier is already on the stack.
  *
@@ -466,6 +472,21 @@ export function bindArmatureModifier(partId) {
       bindFailReason = 'target-not-a-part-mid-update'; return;
     }
     if (!Array.isArray(target.modifiers)) target.modifiers = [];
+    // Persist the bind onto the mesh datablock so Init Rig's
+    // `synthesizeModifierStacks` can re-emit the Armature (and the
+    // body-warp chain for bone-baked parts). Do not overwrite an
+    // existing jointBoneId / painted weights (post-Apply re-bind).
+    const targetMesh = getMesh(target, proj);
+    if (targetMesh) {
+      if (typeof targetMesh.jointBoneId !== 'string' || targetMesh.jointBoneId.length === 0) {
+        targetMesh.jointBoneId = jointBoneId;
+      }
+      const vertCount = Array.isArray(targetMesh.vertices) ? targetMesh.vertices.length : 0;
+      if (vertCount > 0
+          && (!Array.isArray(targetMesh.boneWeights) || targetMesh.boneWeights.length === 0)) {
+        targetMesh.boneWeights = new Array(vertCount).fill(1);
+      }
+    }
     // Place AFTER any existing deformer chain (same convention as
     // `synthesizeModifierStacks`). Mirrors Blender's "Add Modifier"
     // appending to the end of the stack.
