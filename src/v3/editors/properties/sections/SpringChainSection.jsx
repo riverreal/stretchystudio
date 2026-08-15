@@ -149,8 +149,8 @@ export function SpringChainSection({ nodeId }) {
             </span>
           </PropertyRow>
           <p className="px-2 pb-1 text-[10px] text-muted-foreground leading-snug">
-            Idle generation keys ParamWind; further joints lag more so the
-            mesh waves like cloth. Bake is automatic when you generate a motion.
+            Idle generation keys ParamWind. The first joints stay quiet; the
+            tip carries the wave. Bake is automatic when you generate a motion.
           </p>
           <div className="flex gap-1 px-2 pb-2">
             <button

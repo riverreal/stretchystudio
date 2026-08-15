@@ -17,6 +17,7 @@ import {
   resolveWarpGridDims,
   springBandWeight,
   springChainRuleId,
+  springJointGain,
   springChainShift,
   springJointParamId,
 } from '../../src/io/live2d/rig/springChain.js';
@@ -103,6 +104,14 @@ expect('springBandWeight last joint peaks near the tip', () => {
   const tip0 = springBandWeight(1, 0, 3);
   const tip2 = springBandWeight(1, 2, 3);
   assert.ok(tip2 > tip0, `tip joint should outweigh root joint at frac=1 (${tip2} vs ${tip0})`);
+});
+
+expect('springJointGain keeps the first joint quiet', () => {
+  assert.ok(springJointGain(0, 3) < 0.25, `first joint gain ${springJointGain(0, 3)}`);
+  assert.ok(springJointGain(2, 3) > 0.95, `tip joint gain ${springJointGain(2, 3)}`);
+  const firstPeak = springBandWeight(1 / 3, 0, 3);
+  const tipPeak = springBandWeight(1, 2, 3);
+  assert.ok(tipPeak > firstPeak * 3, `tip band ${tipPeak} should dwarf first ${firstPeak}`);
 });
 
 expect('springChainShift is identity at rest keys', () => {
@@ -239,7 +248,8 @@ expect('buildSpringChainPhysicsRule lags the tip more than the root joint', () =
   assert.ok(tip.mobility < near.mobility, `tip mobility ${tip.mobility} should be < near ${near.mobility}`);
   assert.ok(tip.acceleration < near.acceleration, `tip accel ${tip.acceleration} should be < near ${near.acceleration}`);
   assert.ok(tip.radius > near.radius, `tip radius ${tip.radius} should be > near ${near.radius}`);
-  assert.ok(rule.outputs[2].scale > rule.outputs[0].scale, 'tip output scale grows');
+  assert.ok(rule.outputs[2].scale > rule.outputs[0].scale * 3, 'tip output scale dwarfs the first joint');
+  assert.ok(rule.outputs[0].scale <= 0.30, `first joint scale ${rule.outputs[0].scale} should stay quiet`);
   // Cubism applies force as accel*delay² — floors keep lag=1 from freezing.
   assert.ok(tip.delay >= 0.32, `tip delay ${tip.delay} froze the integrator`);
   assert.ok(tip.mobility >= 0.70, `tip mobility ${tip.mobility} is too dead`);

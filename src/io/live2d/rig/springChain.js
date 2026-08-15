@@ -140,8 +140,22 @@ export function canAddSpringChain(project, partId) {
 }
 
 /**
+ * Per-joint amplitude. First joint is a whisper so the cascade
+ * direction (pinned → free) reads; the tip carries the wave.
+ *
+ * @param {number} j
+ * @param {number} n
+ */
+export function springJointGain(j, n) {
+  if (n <= 1) return 1;
+  const t = Math.max(0, Math.min(1, j / (n - 1)));
+  return 0.16 + 0.84 * t * t;
+}
+
+/**
  * Band weight for joint `j` of `n` at normalised length `frac` (0 = root, 1 = tip).
  * Root row stays pinned (`frac` factor). Peaks are spaced toward the tip.
+ * Early joints are also gain-scaled so they don't fight the tip wave.
  *
  * @param {number} frac
  * @param {number} j
@@ -154,7 +168,7 @@ export function springBandWeight(frac, j, n) {
   // one jelly mass — each band stays a distinct travelling-wave crest.
   const sigma = Math.max(0.12, 0.40 / n);
   const d = (frac - peak) / sigma;
-  return frac * Math.exp(-0.5 * d * d);
+  return frac * springJointGain(j, n) * Math.exp(-0.5 * d * d);
 }
 
 /**
@@ -361,10 +375,11 @@ export function buildSpringChainPhysicsRule(partId, paramIds, opts = {}) {
   ];
   const outputs = paramIds.map((paramId, i) => {
     const t = n <= 1 ? 1 : i / Math.max(1, n - 1);
+    const gain = springJointGain(i, n);
     return {
       paramId,
       vertexIndex: i + 1,
-      scale: 1.0 + t * lerp(0.08, 0.40, lag),
+      scale: gain * (1.0 + t * lerp(0.10, 0.40, lag)),
       isReverse: false,
     };
   });
@@ -483,7 +498,9 @@ function applySpringChainWarpKeyforms(project, partId, paramIds, axis) {
   const mags = DEFAULT_AUTO_RIG_CONFIG.tagWarpMagnitudes;
   return writeWarpKeyforms(project, warp, bindings, (grid, gW, gH, keys, gx, gy) => (
     springChainShift(grid, gW, gH, keys, gx, gy, {
-      xSway: mags.hairBackXSway,
+      // Slightly more lateral travel than default hair so the pinned→free
+      // direction reads; early-joint gain keeps the root from swinging.
+      xSway: mags.hairBackXSway * 1.35,
       yCurl: mags.hairBackYCurl,
       axis,
     })
