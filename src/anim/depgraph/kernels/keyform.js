@@ -96,9 +96,15 @@ function interpolateWarpState(def, cell) {
     const w = cell.weights[i];
     if (w === 0) continue;
     const kf = keyforms[cell.indices[i]];
-    if (!kf || !Array.isArray(kf.positions)) continue;
-    for (let j = 0; j < len && j < kf.positions.length; j++) {
-      grid[j] += w * kf.positions[j];
+    // Plain Array OR TypedArray. `Array.isArray(Float64Array)` is
+    // false — skipping those left a zero grid and collapsed the mesh
+    // (artMeshDisappearDiag / BUG-NECK_NULL_BBOX class).
+    const pos = kf?.positions;
+    if (!pos || !(Array.isArray(pos) || (ArrayBuffer.isView(pos) && !(pos instanceof DataView)))) {
+      continue;
+    }
+    for (let j = 0; j < len && j < pos.length; j++) {
+      grid[j] += w * pos[j];
     }
     opacity += w * (typeof kf.opacity === 'number' ? kf.opacity : 1);
   }

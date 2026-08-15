@@ -161,6 +161,12 @@ expect('addSpringChain writes params, warp bands, physics, and the record', () =
   assert.equal(warp.bindings.length, 3);
   assert.equal(warp.keyforms.length, 27);
   assert.equal(warp._userAuthored, true);
+  for (const kf of warp.keyforms) {
+    assert.ok(Array.isArray(kf.positions), 'keyform positions must be a plain Array (KEYFORM_EVAL skips TypedArrays)');
+  }
+  const restKf = warp.keyforms.find((k) => (k.keyTuple ?? []).every((v) => v === 0));
+  assert.ok(restKf, 'rest (0,0,0) keyform exists');
+  assert.deepEqual(restKf.positions, Array.from(project.nodes[1].baseGrid));
   const hairPhys = project.nodes[0].modifiers.find((m) => m.ruleId === 'PhysicsSetting2');
   assert.equal(hairPhys.enabled, false, 'default hair physics disabled');
   const springMods = project.nodes[0].modifiers.filter((m) => m.ruleId === springChainRuleId('part_hair'));

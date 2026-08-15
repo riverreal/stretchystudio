@@ -32,13 +32,14 @@ import { tabsFor, sectionsForTab } from './propertiesTabRegistry.jsx';
 
 export function PropertiesEditor() {
   const items = useSelectionStore((s) => s.items);
-  // S2 — narrow subscription. Predicates in `sectionRegistry.jsx` only
-  // ever read `project.nodes` (verified by audit 2026-05-09); section
-  // render fns read `active` only and do their own store hooks. By
-  // subscribing to nodes alone, unrelated mutations (paramValues writes,
-  // `project.parameters`/`physicsRules`/`autoRigConfig` edits) stop
-  // re-rendering the whole properties stack.
+  // S2 — narrow subscription. Most predicates only read `project.nodes`
+  // (audit 2026-05-09). Spring Chain also needs `springChains` so the
+  // Physics tab stays up after add. Unrelated mutations (paramValues,
+  // parameters, autoRigConfig) still do not re-render this stack.
   const nodes = useProjectStore((s) => s.project.nodes);
+  // Spring Chain visibility also reads `project.springChains` (a chain
+  // must stay listed after add even if warp lookup flickers).
+  const springChains = useProjectStore((s) => s.project.springChains);
   const stickyTab = useEditorStore((s) => s.propertiesActiveTab);
 
   const active = items.length > 0 ? items[items.length - 1] : null;
@@ -46,8 +47,8 @@ export function PropertiesEditor() {
   // Stable ctx so memo deps below are deterministic — `nodes` identity
   // changes only when the array's reference changes (immer per-mutation).
   const ctx = useMemo(
-    () => ({ active, project: { nodes } }),
-    [active, nodes],
+    () => ({ active, project: { nodes, springChains } }),
+    [active, nodes, springChains],
   );
 
   const visibleTabs = useMemo(

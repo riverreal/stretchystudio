@@ -25,6 +25,7 @@
  */
 
 import { sanitisePartName } from '../../../lib/partId.js';
+import { coerceNumberArray } from '../../../lib/numberArrayCoerce.js';
 import { matchTag } from '../../armatureMeta.js';
 import { getMesh } from '../../../store/objectDataAccess.js';
 import { getRigWarpNodes } from './deformerNodeReaders.js';
@@ -346,9 +347,15 @@ function writeWarpKeyforms(project, warp, bindings, shiftFn) {
     keys: b.keys.slice(),
     interpolation: b.interpolation ?? 'LINEAR',
   }));
-  warp.keyforms = tuples.map((keyTuple) => ({
+  warp.keyforms = tuples.map((keyTuple, i) => ({
     keyTuple: keyTuple.slice(),
-    positions: shiftFn(rest, gW, gH, keyTuple, gxSpan, gySpan),
+    // Persist plain arrays — KEYFORM_EVAL skips Float64Array
+    // (`Array.isArray` is false) and interpolates a zero grid, which
+    // collapses the part to a point (artMeshDisappearDiag).
+    positions: coerceNumberArray(
+      shiftFn(rest, gW, gH, keyTuple, gxSpan, gySpan),
+      `springChain.keyforms[${i}].positions`,
+    ),
     opacity: 1,
   }));
   warp._userAuthored = true;
@@ -393,7 +400,7 @@ function restoreTagWarpBindings(project, part) {
     warp.bindings = [];
     warp.keyforms = [{
       keyTuple: [],
-      positions: restRaw instanceof Float64Array ? restRaw : Float64Array.from(restRaw),
+      positions: coerceNumberArray(restRaw, 'springChain.restore.positions'),
       opacity: 1,
     }];
     delete warp._userAuthored;
