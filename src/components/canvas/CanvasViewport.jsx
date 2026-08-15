@@ -790,6 +790,8 @@ export default function CanvasViewport({
       // new disjunct lets Space play actually animate the model on
       // Layout / Live Preview / any other tab.
       const _anim = animRef.current;
+      /** @type {Set<string>|null} */
+      let actionParamIds = null;
       if (getEditorMode() === 'animation' || _anim.isPlaying) {
         const _proj = projectRef.current;
         // Stage 1.E: scene-bound action wins over UI-store fallback.
@@ -798,6 +800,7 @@ export default function CanvasViewport({
           const _endMs = (_anim.endFrame / _anim.fps) * 1000;
           const paramOv = computeParamOverrides(_activeAction, _anim.currentTime, _anim.loopKeyframes, _endMs);
           if (paramOv.size > 0) {
+            actionParamIds = new Set(paramOv.keys());
             const merged = { ...valuesForEval };
             const updates = {};
             for (const [paramId, val] of paramOv) {
@@ -812,6 +815,12 @@ export default function CanvasViewport({
               // truth lives in pose.rotation when user authors; playback
               // just animates the deformer-facing param mirror.
               useParamValuesStore.getState().setMany(updates, { skipBoneMirror: true });
+              // Same R12 ref-advance the driver path uses below. Without
+              // this, Live Preview later resets valuesForEval to the
+              // stale ref and idle BodyAngle never reaches art-mesh eval
+              // — extras freeze while clothing still moves from baked
+              // spring keys / live physics.
+              paramValuesRef.current = useParamValuesStore.getState().values;
               isDirtyRef.current = true;
             }
           }
@@ -955,6 +964,18 @@ export default function CanvasViewport({
           updates.ParamBodyAngleX = cx * 10;
           updates.ParamBodyAngleY = -cy * 10;
           updates.ParamBodyAngleZ = cx * 10;
+          // Idle (and any playing action) already owns these channels.
+          // Writing look/breath on top zeros ParamBodyAngle* when the
+          // cursor is released, so extras rigid-follow a rest body
+          // while the clip's clothing/springs keep moving. While the
+          // playhead is paused, leave look in charge if the user is
+          // actually holding the mouse (Live Preview follow still works
+          // after Generate Idle).
+          if (actionParamIds && (_anim.isPlaying || !lookRef.current.active)) {
+            for (const k of Object.keys(updates)) {
+              if (actionParamIds.has(k)) delete updates[k];
+            }
+          }
         }
 
         // Physics — rebuild state on rigSpec identity change, then
