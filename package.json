@@ -56,6 +56,7 @@
     "test:numberArrayCoerce": "node scripts/test/test_numberArrayCoerce.mjs",
     "test:neckWarpFloat64Pipeline": "node scripts/test/test_neckWarpFloat64Pipeline.mjs",
     "test:ids": "node scripts/test/test_ids.mjs",
+    "test:swUpdateCheck": "node scripts/test/test_swUpdateCheck.mjs",
     "test:uiV3Store": "node scripts/test/test_uiV3Store.mjs",
     "test:workspaceModeEntry": "node scripts/test/test_workspaceModeEntry.mjs",
     "test:selectionStore": "node scripts/test/test_selectionStore.mjs",

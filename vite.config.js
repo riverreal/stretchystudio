@@ -84,8 +84,10 @@ const dropOrtWasm = {
 //
 // `registerType: 'prompt'` — the SW activates only after the user
 // accepts an "Update available" toast (wired in `src/lib/swRegister.jsx`).
-// Auto-update would otherwise risk swapping assets mid-session and
-// breaking long-running sessions like a wizard flow.
+// An open tab polls for a new SW (and re-checks on focus) so a deploy
+// can surface the toast without a manual reload. Auto-update would
+// otherwise risk swapping assets mid-session and breaking long-running
+// sessions like a wizard flow.
 //
 // The precache list is bounded by `globPatterns` so the heavy
 // `ort.bundle.min` (~110 kB gzip) and `initRig` (~66 kB gzip) chunks
