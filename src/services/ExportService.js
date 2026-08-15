@@ -25,6 +25,7 @@ import {
   exportLive2DProject,
 } from '../io/live2d/exporter.js';
 import { exportToSpine } from '../io/exportSpine.js';
+import { listSavedProjects } from './PersistenceService.js';
 
 /**
  * @typedef {('cmo3'|'live2d-runtime'|'live2d-full'|'spine')} ExportFormat
@@ -88,6 +89,66 @@ function isSupportedFormat(f) {
       || f === 'spine';   // GAP-005: Spine 4.0 JSON
 }
 
+/** @param {string} f */
+function isLive2dZipFormat(f) {
+  return f === 'live2d-runtime' || f === 'live2d-full';
+}
+
+/**
+ * Library display name for the currently-linked Stretchy project, or
+ * `null` when the project has never been saved to the library (no
+ * `currentLibraryId`, missing record, or empty name). Template
+ * `project.name` values like "Untitled (Square)" are intentionally
+ * ignored — those are canvas presets, not the user's project name.
+ *
+ * @returns {Promise<string|null>}
+ */
+async function resolveLibraryProjectName() {
+  const linkedId = useProjectStore.getState().currentLibraryId;
+  if (!linkedId) return null;
+  try {
+    const recs = await listSavedProjects();
+    const rec = recs.find((p) => p.id === linkedId);
+    const name = (rec?.name ?? '').trim();
+    return name || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * ASCII-safe filename stem for Cubism files inside the zip
+ * (`Foo.moc3`, `Foo.model3.json`, …). Matches `sanitizeName` in the
+ * Live2D exporter.
+ *
+ * @param {string} raw
+ * @returns {string}
+ */
+function sanitiseModelName(raw) {
+  const sanitised = (raw ?? '')
+    .replace(/[^a-zA-Z0-9_-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return sanitised.length > 0 ? sanitised : 'model';
+}
+
+/**
+ * Download filename for a Live2D runtime zip. Uses the library
+ * project name when saved; otherwise the default `model_live2d.zip`.
+ * Path separators are stripped so the browser download attribute
+ * cannot be treated as a nested path.
+ *
+ * @param {string|null|undefined} libraryName
+ * @returns {string}
+ */
+export function live2dZipDownloadName(libraryName) {
+  const trimmed = (libraryName ?? '').trim();
+  const base = trimmed
+    ? trimmed.replace(/[\\/]/g, '_')
+    : 'model';
+  return `${base}_live2d.zip`;
+}
+
 /**
  * Run the export. Resolves with `{ok, blob?, error?}` - does not throw.
  *
@@ -113,16 +174,18 @@ export async function runExport(opts) {
   // upgraded to emit pct (a Phase 1 todo), they'll pass through.
   const wrapProgress = (msg) => emit(undefined, typeof msg === 'string' ? msg : 'progress');
 
-  // Derive modelName from the project so files inside the zip
-  // (model.moc3, model.model3.json, …) match the user's project name —
-  // not the bare "model" default. ASCII-safe sanitisation matches the
-  // exporter's `sanitizeName` rules so Cubism accepts the filenames.
-  const rawName = (project?.name ?? '').trim();
-  const sanitised = rawName
-    .replace(/[^a-zA-Z0-9_-]/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_+|_+$/g, '');
-  const modelName = sanitised.length > 0 ? sanitised : 'model';
+  // Live2D runtime zips take their name from the Stretchy library
+  // record (the name the user typed at Save). Unsaved / unlinked
+  // projects keep the default "model" stem so the download is
+  // `model_live2d.zip` rather than a template label like
+  // "Untitled (Square)". Other formats still use `project.name`.
+  const libraryName = isLive2dZipFormat(format)
+    ? await resolveLibraryProjectName()
+    : null;
+  const rawName = isLive2dZipFormat(format)
+    ? (libraryName ?? '')
+    : (project?.name ?? '').trim();
+  const modelName = sanitiseModelName(rawName);
 
   try {
     /** @type {Blob|undefined} */
@@ -152,6 +215,9 @@ export async function runExport(opts) {
     emit(1, 'export complete');
     if (!blob) {
       return { ok: false, error: 'export returned no blob' };
+    }
+    if (isLive2dZipFormat(format)) {
+      return { ok: true, blob, filename: live2dZipDownloadName(libraryName) };
     }
     return { ok: true, blob };
   } catch (err) {

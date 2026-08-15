@@ -320,10 +320,13 @@ export function ExportModal() {
       const ext = format === 'spine'
         ? '_spine.zip'                                    // GAP-005 Spine target
         : (isZip ? '_live2d.zip' : '.cmo3');
+      // Live2D runtime zips are named after the saved Stretchy library
+      // project; unsaved projects keep the default `model_live2d.zip`.
+      const downloadName = res.filename || (baseName + ext);
       const url = URL.createObjectURL(res.blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = baseName + ext;
+      a.download = downloadName;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);

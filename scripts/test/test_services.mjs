@@ -8,7 +8,7 @@
 // Run: node scripts/test/test_services.mjs
 
 import { preflightBuildRigFor } from '../../src/services/RigService.js';
-import { preflightExportFor } from '../../src/services/ExportService.js';
+import { preflightExportFor, live2dZipDownloadName } from '../../src/services/ExportService.js';
 import { detectImportFormat, importFile } from '../../src/services/ImportService.js';
 
 let passed = 0;
@@ -81,6 +81,15 @@ function assert(cond, name) {
 {
   const r = preflightExportFor(null, 'cmo3');
   assert(r.ok === false, 'preflight: null project → fail');
+}
+
+{
+  assert(live2dZipDownloadName(null) === 'model_live2d.zip', 'zip name: unsaved → model_live2d.zip');
+  assert(live2dZipDownloadName('') === 'model_live2d.zip', 'zip name: empty → model_live2d.zip');
+  assert(live2dZipDownloadName('  ') === 'model_live2d.zip', 'zip name: whitespace → model_live2d.zip');
+  assert(live2dZipDownloadName('Shelby') === 'Shelby_live2d.zip', 'zip name: saved project name');
+  assert(live2dZipDownloadName(' Cool Girl ') === 'Cool Girl_live2d.zip', 'zip name: keeps spaces');
+  assert(live2dZipDownloadName('foo/bar') === 'foo_bar_live2d.zip', 'zip name: strips path separators');
 }
 
 // ── ImportService format detection ──────────────────────────────────
