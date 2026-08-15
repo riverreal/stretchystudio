@@ -131,7 +131,7 @@ export function SpringChainSection({ nodeId }) {
           </PropertyRow>
           <NumberField
             label="Wave lag"
-            title="How late the tip follows. 0 is snappier; 1 is heavy cloth."
+            title="How late the tip follows the root. 0 is snappier; 1 is a slower travelling wave — the chain still swings."
             value={lag}
             min={MIN_LAG}
             max={MAX_LAG}
@@ -199,7 +199,7 @@ export function SpringChainSection({ nodeId }) {
           </PropertyRow>
           <NumberField
             label="Wave lag"
-            title="How late the tip follows. 0 is snappier; 1 is heavy cloth."
+            title="How late the tip follows the root. 0 is snappier; 1 is a slower travelling wave — the chain still swings."
             value={lag}
             min={MIN_LAG}
             max={MAX_LAG}

@@ -321,10 +321,10 @@ export function ensureParamWind(project) {
  * Cubism pendulum for a travelling-wave chain.
  *
  * Cubism `delay` is inverted vs intuition: **smaller = more phase lag**.
- * The old defaults barely dropped delay (0.77→0.53) and *raised*
- * acceleration toward the tip, so every joint bounced in phase —
- * pudding, not cloth. Tip delay/mobility/accel now fall off, and
- * radius grows, so the wave takes time to crawl down the mesh.
+ * The integrator applies force as `accel * delay²`, so crushing delay /
+ * mobility / accel toward 0 freezes the tip (reads as "no springs").
+ * Lag therefore widens the *spread* and lengthens the rods; floors
+ * keep every joint able to swing.
  *
  * @param {string} partId
  * @param {string[]} paramIds
@@ -335,20 +335,20 @@ export function buildSpringChainPhysicsRule(partId, paramIds, opts = {}) {
   const tag = opts.tag ?? null;
   const hairLike = tag === 'front hair' || tag === 'back hair';
   const lag = normalizeSpringLag(opts.lag);
-  // Longer rods = the gust takes more frames to reach the tip.
-  const step = (hairLike ? 14 : 12) * (0.65 + lag * 0.70);
+  // Longer rods = slower period. Do not compensate by killing mobility.
+  const step = (hairLike ? 12 : 10) * (0.75 + lag * 0.55);
   /** @type {Array<{x:number,y:number,mobility:number,delay:number,acceleration:number,radius:number}>} */
   const vertices = [
     { x: 0, y: 0, mobility: 1.0, delay: 1.0, acceleration: 1.0, radius: 0 },
   ];
   for (let i = 1; i <= n; i++) {
     const t = n <= 1 ? 1 : (i - 1) / Math.max(1, n - 1);
-    const delay = lerp(lerp(0.88, 0.80, lag), lerp(0.62, 0.16, lag), t);
-    const mobility = lerp(lerp(0.92, 0.86, lag), lerp(0.78, 0.38, lag), t);
-    // Cloth follow-through: gravity weakens down the chain. Raising
-    // accel toward the tip is what made the old chain read as jelly.
-    const acceleration = lerp(lerp(1.25, 1.05, lag), lerp(1.45, 0.45, lag), t);
-    const radius = step * (1 + t * lerp(0.05, 0.45, lag));
+    const delay = lerp(lerp(0.88, 0.82, lag), lerp(0.68, 0.38, lag), t);
+    const mobility = lerp(lerp(0.94, 0.90, lag), lerp(0.86, 0.76, lag), t);
+    // Stay near 1 so wind can swing the rod. Do not raise toward the
+    // tip (that was the jelly bounce) and do not drop below ~0.9.
+    const acceleration = lerp(lerp(1.30, 1.18, lag), lerp(1.22, 0.95, lag), t);
+    const radius = step * (1 + t * lerp(0.08, 0.55, lag));
     const y = vertices[vertices.length - 1].y + radius;
     vertices.push({ x: 0, y, mobility, delay, acceleration, radius });
   }

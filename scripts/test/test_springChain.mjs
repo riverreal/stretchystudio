@@ -240,6 +240,10 @@ expect('buildSpringChainPhysicsRule lags the tip more than the root joint', () =
   assert.ok(tip.acceleration < near.acceleration, `tip accel ${tip.acceleration} should be < near ${near.acceleration}`);
   assert.ok(tip.radius > near.radius, `tip radius ${tip.radius} should be > near ${near.radius}`);
   assert.ok(rule.outputs[2].scale > rule.outputs[0].scale, 'tip output scale grows');
+  // Cubism applies force as accel*delay² — floors keep lag=1 from freezing.
+  assert.ok(tip.delay >= 0.32, `tip delay ${tip.delay} froze the integrator`);
+  assert.ok(tip.mobility >= 0.70, `tip mobility ${tip.mobility} is too dead`);
+  assert.ok(tip.acceleration >= 0.90, `tip accel ${tip.acceleration} cannot swing`);
 });
 
 expect('buildSpringChainPhysicsRule lag=1 drops tip delay harder than lag=0', () => {
