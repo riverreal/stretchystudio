@@ -93,14 +93,20 @@ import { getBoneRole } from '../../store/objectDataAccess.js';
  * @typedef {Object} BakePhysicsTuning
  * @property {number} [wiggle=1]  Global output-scale multiplier.
  * @property {number} [lag=1]     Pendulum delay multiplier (bounce).
+ * @property {number} [wind=1]    ParamWind input-weight multiplier.
+ *   Live preview drag is a full ±1; idle wander is milder. Raise
+ *   this so the bake feels like the drag, without rewriting the
+ *   ParamWind fcurve.
  * @property {Record<string, number>} [outputStrength]  Per-output
  *   paramId multiplier, composed with `wiggle`. Missing keys = 1.
  */
 
-const DEFAULT_TUNING = Object.freeze({ wiggle: 1, lag: 1, outputStrength: Object.freeze({}) });
+const DEFAULT_TUNING = Object.freeze({
+  wiggle: 1, lag: 1, wind: 1, outputStrength: Object.freeze({}),
+});
 
 /** Session-sticky last dialog / operator tuning. Clone on read. */
-let _lastTuning = { wiggle: 1, lag: 1, outputStrength: {} };
+let _lastTuning = { wiggle: 1, lag: 1, wind: 1, outputStrength: {} };
 
 /** @type {Readonly<Record<string, string>>} */
 const KNOWN_OUTPUT_LABELS = Object.freeze({
@@ -137,11 +143,12 @@ function sanitizeMul(v, fallback, min, max, label) {
  * authored physics modifiers unchanged. Does not mutate `raw`.
  *
  * @param {BakePhysicsTuning} [raw]
- * @returns {{wiggle: number, lag: number, outputStrength: Record<string, number>}}
+ * @returns {{wiggle: number, lag: number, wind: number, outputStrength: Record<string, number>}}
  */
 export function normalizeBakePhysicsTuning(raw = {}) {
   const wiggle = sanitizeMul(raw.wiggle, 1, 0.05, 8, 'wiggle');
   const lag = sanitizeMul(raw.lag, 1, 0.25, 3, 'lag');
+  const wind = sanitizeMul(raw.wind, 1, 0.05, 8, 'wind');
   /** @type {Record<string, number>} */
   const outputStrength = {};
   if (raw.outputStrength && typeof raw.outputStrength === 'object') {
@@ -150,21 +157,22 @@ export function normalizeBakePhysicsTuning(raw = {}) {
       outputStrength[k] = sanitizeMul(v, 1, 0, 8, `outputStrength.${k}`);
     }
   }
-  return { wiggle, lag, outputStrength };
+  return { wiggle, lag, wind, outputStrength };
 }
 
-/** @returns {{wiggle: number, lag: number, outputStrength: Record<string, number>}} */
+/** @returns {{wiggle: number, lag: number, wind: number, outputStrength: Record<string, number>}} */
 export function getLastBakePhysicsTuning() {
   return {
     wiggle: _lastTuning.wiggle,
     lag: _lastTuning.lag,
+    wind: _lastTuning.wind,
     outputStrength: { ..._lastTuning.outputStrength },
   };
 }
 
 /**
  * @param {BakePhysicsTuning} [tuning]
- * @returns {{wiggle: number, lag: number, outputStrength: Record<string, number>}}
+ * @returns {{wiggle: number, lag: number, wind: number, outputStrength: Record<string, number>}}
  */
 export function setLastBakePhysicsTuning(tuning) {
   _lastTuning = normalizeBakePhysicsTuning(tuning);
@@ -176,18 +184,32 @@ export function resetLastBakePhysicsTuning() {
   _lastTuning = {
     wiggle: DEFAULT_TUNING.wiggle,
     lag: DEFAULT_TUNING.lag,
+    wind: DEFAULT_TUNING.wind,
     outputStrength: { ...DEFAULT_TUNING.outputStrength },
   };
 }
+
+/** @type {Readonly<Record<string, string>>} */
+const CATEGORY_GROUP_LABELS = Object.freeze({
+  hair: 'Hair',
+  clothing: 'Clothing',
+  bust: 'Bust',
+  arms: 'Arms',
+  spring: 'Spring',
+  imported: 'Imported',
+  other: 'Other',
+});
 
 /**
  * Human label for a physics output param.
  *
  * @param {string} paramId
  * @param {string} [ruleName]
+ * @param {string} [partName]  Spring chains: owning part, so two
+ *   "Spring 1" rows from different meshes stay distinguishable.
  * @returns {string}
  */
-export function bakeTargetLabel(paramId, ruleName) {
+export function bakeTargetLabel(paramId, ruleName, partName) {
   if (KNOWN_OUTPUT_LABELS[paramId]) return KNOWN_OUTPUT_LABELS[paramId];
   const rot = typeof paramId === 'string' ? paramId.match(/^ParamRotation_(.+)$/) : null;
   if (rot) return rot[1];
@@ -196,10 +218,40 @@ export function bakeTargetLabel(paramId, ruleName) {
     const idx = tail.lastIndexOf('_');
     const n = idx >= 0 ? tail.slice(idx + 1) : '';
     const joint = Number(n);
-    if (Number.isFinite(joint)) return `Spring ${joint + 1}`;
-    return 'Spring';
+    const jointLabel = Number.isFinite(joint) ? `Spring ${joint + 1}` : 'Spring';
+    if (typeof partName === 'string' && partName.length > 0) {
+      return `${partName} · ${jointLabel}`;
+    }
+    return jointLabel;
   }
   return ruleName || paramId;
+}
+
+/**
+ * Display name of the node that owns this physics output (the part
+ * the spring chain is attached to, or the modifier's host).
+ *
+ * @param {object} project
+ * @param {string} paramId
+ * @returns {string|null}
+ */
+function findPhysicsOutputOwnerName(project, paramId) {
+  const chain = (project?.springChains ?? []).find((c) => (
+    Array.isArray(c?.paramIds) && c.paramIds.includes(paramId)
+  ));
+  if (chain?.partId) {
+    const named = (project.nodes ?? []).find((n) => n && n.id === chain.partId);
+    if (named?.name) return named.name;
+  }
+  for (const node of project?.nodes ?? []) {
+    if (!Array.isArray(node?.modifiers)) continue;
+    for (const mod of node.modifiers) {
+      if (mod?.type === 'physicsModifier' && mod.output?.paramId === paramId) {
+        return node.name ?? node.id ?? null;
+      }
+    }
+  }
+  return null;
 }
 
 /**
@@ -207,27 +259,66 @@ export function bakeTargetLabel(paramId, ruleName) {
  * Dialog source of truth — empty when nothing is seeded.
  *
  * @param {object} project
- * @returns {Array<{paramId: string, name: string, category: string, label: string, scale: number}>}
+ * @returns {Array<{paramId: string, name: string, category: string, groupId: string, groupLabel: string, partName: string|null, label: string, scale: number}>}
  */
 export function listPhysicsBakeTargets(project) {
   const rules = gatherPhysicsRules(project) ?? [];
-  /** @type {Array<{paramId: string, name: string, category: string, label: string, scale: number}>} */
+  /** @type {Array<{paramId: string, name: string, category: string, groupId: string, groupLabel: string, partName: string|null, label: string, scale: number}>} */
   const out = [];
   const seen = new Set();
   for (const rule of rules) {
     for (const o of rule.outputs ?? []) {
       if (!o?.paramId || typeof o.paramId !== 'string' || seen.has(o.paramId)) continue;
       seen.add(o.paramId);
+      const category = rule.category ?? 'other';
+      const isSpring = category === 'spring' || o.paramId.startsWith('ParamSpring_');
+      const partName = isSpring ? findPhysicsOutputOwnerName(project, o.paramId) : null;
+      const groupId = isSpring
+        ? `spring:${partName ?? rule.id ?? o.paramId}`
+        : category;
+      const groupLabel = isSpring
+        ? (partName ?? 'Spring')
+        : (CATEGORY_GROUP_LABELS[category] ?? rule.name ?? 'Other');
       out.push({
         paramId: o.paramId,
         name: rule.name ?? rule.id ?? o.paramId,
-        category: rule.category ?? 'other',
+        category,
+        groupId,
+        groupLabel,
+        partName,
         label: bakeTargetLabel(o.paramId, rule.name),
         scale: typeof o.scale === 'number' ? o.scale : 1,
       });
     }
   }
   return out;
+}
+
+/**
+ * Group bake targets in first-seen order (hair, then each spring part, …).
+ *
+ * @param {Array<{groupId?: string, groupLabel?: string, category?: string, paramId: string}>} targets
+ * @returns {Array<{id: string, label: string, kind: 'spring'|'physics', items: object[]}>}
+ */
+export function groupPhysicsBakeTargets(targets) {
+  /** @type {Map<string, {id: string, label: string, kind: 'spring'|'physics', items: object[]}>} */
+  const groups = new Map();
+  for (const t of targets ?? []) {
+    const id = t.groupId ?? t.category ?? 'other';
+    let g = groups.get(id);
+    if (!g) {
+      const kind = (t.category === 'spring' || id.startsWith('spring:')) ? 'spring' : 'physics';
+      g = {
+        id,
+        label: t.groupLabel ?? CATEGORY_GROUP_LABELS[t.category ?? ''] ?? 'Other',
+        kind,
+        items: [],
+      };
+      groups.set(id, g);
+    }
+    g.items.push(t);
+  }
+  return [...groups.values()];
 }
 
 /**
@@ -244,6 +335,11 @@ export function applyBakePhysicsTuning(rules, tuning) {
   if (!Array.isArray(rules) || rules.length === 0) return [];
   return rules.map((rule) => ({
     ...rule,
+    inputs: (rule.inputs ?? []).map((i) => {
+      if (!i || i.paramId !== 'ParamWind') return { ...i };
+      const weight = typeof i.weight === 'number' ? i.weight : 1;
+      return { ...i, weight: weight * t.wind };
+    }),
     vertices: (rule.vertices ?? []).map((v) => {
       const delay = typeof v.delay === 'number' ? v.delay : 0;
       return { ...v, delay: Math.max(0, Math.min(3, delay * t.lag)) };
@@ -327,6 +423,8 @@ function rnaPathForBakedOutput(project, paramId) {
  *   at authored scale. Identity = 1.
  * @property {number} [lag=1]           - Pendulum delay multiplier.
  *   >1 = more bounce/lag. Identity = 1.
+ * @property {number} [wind=1]          - ParamWind input-weight
+ *   multiplier. Identity = 1.
  * @property {Record<string, number>} [outputStrength] - Per-output
  *   paramId multiplier, composed with `wiggle`. Missing keys = 1.
  */
@@ -413,6 +511,7 @@ export function bakePhysics(action, project, options = {}) {
   const rules = applyBakePhysicsTuning(authoredRules, {
     wiggle: options.wiggle,
     lag: options.lag,
+    wind: options.wind,
     outputStrength: options.outputStrength,
   });
 

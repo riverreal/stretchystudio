@@ -314,6 +314,7 @@ function registerBuiltins() {
           preRollMs: 500,
           wiggle: tuning.wiggle,
           lag: tuning.lag,
+          wind: tuning.wind,
           outputStrength: tuning.outputStrength,
         });
       });

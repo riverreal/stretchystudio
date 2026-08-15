@@ -33,7 +33,7 @@ import { buildMotion3, PRESETS, PRESET_NAMES, PERSONALITY_PRESETS, makeLoopingCy
 import { buildParamFCurve } from '../../../anim/animationFCurve.js';
 import { sanitizeName } from '../../../io/live2d/exporter.js';
 import { uniqueName } from '../../../lib/uniqueName.js';
-import { applyBakePhysics } from '../../operators/bakePhysics.js';
+import { applyBakePhysics, getLastBakePhysicsTuning } from '../../operators/bakePhysics.js';
 import { gatherPhysicsRules } from '../../../io/live2d/rig/physicsConfig.js';
 
 // shadcn/ui forwardRef components ship without JSX-typed declarations — cast
@@ -207,7 +207,7 @@ export function IdleMotionDialog({ open, onOpenChange }) {
         );
         const next = { ...s.project, actions };
         if (gatherPhysicsRules(next).length > 0) {
-          applyBakePhysics(next, created.id, {});
+          applyBakePhysics(next, created.id, getLastBakePhysicsTuning());
           if (isLoopPreset) {
             const baked = next.actions.find((a) => a.id === created.id);
             for (const fc of baked?.fcurves ?? []) {

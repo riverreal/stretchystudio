@@ -275,8 +275,8 @@ export const LOOK_SET = Object.freeze([
   'tiltLeft', 'tiltRight',
 ]);
 
-const WIND_LOOP = { ...r('ParamWind'), kind: 'wander', cfg: { amplitude: 0.55, harmonics: 2, mid: 0, samples: 18 } };
-const WIND_HOLD = { ...r('ParamWind'), kind: 'sine',   cfg: { amplitude: 0.28, period: 4500, phase: 0 } };
+const WIND_LOOP = { ...r('ParamWind'), kind: 'wander', cfg: { amplitude: 0.85, harmonics: 2, mid: 0, samples: 18 } };
+const WIND_HOLD = { ...r('ParamWind'), kind: 'sine',   cfg: { amplitude: 0.45, period: 4500, phase: 0 } };
 for (const entry of Object.values(PRESETS)) {
   if (!entry?.params || entry.params.ParamWind) continue;
   entry.params.ParamWind = (entry.cycleType === 'hold') ? WIND_HOLD : WIND_LOOP;

@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { Wind } from 'lucide-react';
+import { ChevronDown, ChevronRight, Wind } from 'lucide-react';
 import * as DialogImpl from '../../../components/ui/dialog.jsx';
 import * as ButtonImpl from '../../../components/ui/button.jsx';
 import * as LabelImpl from '../../../components/ui/label.jsx';
@@ -20,6 +20,7 @@ import { getActiveSceneAction } from '../../../anim/sceneAction.js';
 import { getOperator } from '../../operators/registry.js';
 import {
   getLastBakePhysicsTuning,
+  groupPhysicsBakeTargets,
   listPhysicsBakeTargets,
 } from '../../operators/bakePhysics.js';
 
@@ -53,11 +54,15 @@ export function BakePhysicsDialog({ open, onOpenChange }) {
   const project = useProjectStore((s) => s.project);
   const activeActionId = useAnimationStore((s) => s.activeActionId);
   const targets = useMemo(() => listPhysicsBakeTargets(project), [project]);
+  const groups = useMemo(() => groupPhysicsBakeTargets(targets), [targets]);
 
   const [wiggle, setWiggle] = useState(1);
   const [lag, setLag] = useState(1);
+  const [wind, setWind] = useState(1);
   /** @type {[Record<string, number>, function(Record<string, number>): void]} */
   const [strength, setStrength] = useState({});
+  /** @type {[Record<string, boolean>, function(function(Record<string, boolean>): Record<string, boolean>): void]} */
+  const [collapsed, setCollapsed] = useState({});
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -65,14 +70,22 @@ export function BakePhysicsDialog({ open, onOpenChange }) {
     const last = getLastBakePhysicsTuning();
     setWiggle(last.wiggle);
     setLag(last.lag);
+    setWind(last.wind);
     /** @type {Record<string, number>} */
     const next = {};
     for (const t of targets) {
       next[t.paramId] = last.outputStrength[t.paramId] ?? 1;
     }
     setStrength(next);
+    const springGroups = groups.filter((g) => g.kind === 'spring').length;
+    /** @type {Record<string, boolean>} */
+    const nextCollapsed = {};
+    for (const g of groups) {
+      nextCollapsed[g.id] = g.kind === 'spring' && springGroups > 1;
+    }
+    setCollapsed(nextCollapsed);
     setBusy(false);
-  }, [open, targets]);
+  }, [open, targets, groups]);
 
   function handleBake() {
     setBusy(true);
@@ -81,7 +94,7 @@ export function BakePhysicsDialog({ open, onOpenChange }) {
       if (!op) throw new Error('anim.bakePhysics is not registered');
       op.exec({
         editorType: 'timeline',
-        bakePhysics: { wiggle, lag, outputStrength: strength },
+        bakePhysics: { wiggle, lag, wind, outputStrength: strength },
       });
       onOpenChange(false);
     } catch {
@@ -97,7 +110,7 @@ export function BakePhysicsDialog({ open, onOpenChange }) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[480px]">
+      <DialogContent className="sm:max-w-[480px] max-h-[85vh] overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Wind size={16} className="text-primary" />
@@ -109,7 +122,7 @@ export function BakePhysicsDialog({ open, onOpenChange }) {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-4 py-2">
+        <div className="grid gap-4 py-2 min-h-0">
           <div className="grid grid-cols-3 items-center gap-3">
             <Label htmlFor="bake-wiggle">Wiggle</Label>
             <div className="col-span-2 flex flex-col gap-1">
@@ -124,6 +137,25 @@ export function BakePhysicsDialog({ open, onOpenChange }) {
               />
               <span className="text-[10px] text-muted-foreground">
                 Global multiplier on every physics output. 1 = authored, 2 = twice as big.
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 items-center gap-3">
+            <Label htmlFor="bake-wind">Wind</Label>
+            <div className="col-span-2 flex flex-col gap-1">
+              <Input
+                id="bake-wind"
+                type="number"
+                min={0.05}
+                max={8}
+                step={0.05}
+                value={wind}
+                onChange={(e) => setWind(numOr(e.target.value, 1))}
+              />
+              <span className="text-[10px] text-muted-foreground">
+                How hard ParamWind pushes the pendulums. Live drag is a full ±1;
+                idle wander is milder — try 1.5–2 to match the preview.
               </span>
             </div>
           </div>
@@ -147,30 +179,56 @@ export function BakePhysicsDialog({ open, onOpenChange }) {
           </div>
 
           {targets.length > 0 ? (
-            <div className="grid gap-2">
+            <div className="grid gap-2 min-h-0">
               <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
                 Per output
               </div>
-              {targets.map((t) => (
-                <div key={t.paramId} className="grid grid-cols-3 items-center gap-3">
-                  <Label htmlFor={`bake-out-${t.paramId}`} className="truncate" title={t.paramId}>
-                    {t.label}
-                  </Label>
-                  <Input
-                    id={`bake-out-${t.paramId}`}
-                    className="col-span-2"
-                    type="number"
-                    min={0}
-                    max={8}
-                    step={0.1}
-                    value={strength[t.paramId] ?? 1}
-                    onChange={(e) => {
-                      const v = numOr(e.target.value, 1);
-                      setStrength({ ...strength, [t.paramId]: v });
-                    }}
-                  />
-                </div>
-              ))}
+              <div className="overflow-y-auto max-h-[min(46vh,380px)] pr-1 grid gap-2">
+                {groups.map((g) => {
+                  const isCollapsed = collapsed[g.id] === true;
+                  return (
+                    <div key={g.id} className="rounded border border-border/60">
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-1.5 px-2 py-1 text-left hover:bg-muted/40"
+                        onClick={() => setCollapsed((s) => ({ ...s, [g.id]: !isCollapsed }))}
+                      >
+                        {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+                        <span className="text-[11px] font-medium truncate">
+                          {g.kind === 'spring' ? `Spring · ${g.label}` : g.label}
+                        </span>
+                        <span className="ml-auto text-[10px] text-muted-foreground tabular-nums">
+                          {g.items.length}
+                        </span>
+                      </button>
+                      {isCollapsed ? null : (
+                        <div className="grid gap-2 px-2 pb-2">
+                          {g.items.map((t) => (
+                            <div key={t.paramId} className="grid grid-cols-3 items-center gap-3">
+                              <Label htmlFor={`bake-out-${t.paramId}`} className="truncate" title={t.paramId}>
+                                {t.label}
+                              </Label>
+                              <Input
+                                id={`bake-out-${t.paramId}`}
+                                className="col-span-2"
+                                type="number"
+                                min={0}
+                                max={8}
+                                step={0.1}
+                                value={strength[t.paramId] ?? 1}
+                                onChange={(e) => {
+                                  const v = numOr(e.target.value, 1);
+                                  setStrength({ ...strength, [t.paramId]: v });
+                                }}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
               <span className="text-[10px] text-muted-foreground">
                 Composed with Wiggle. Hair is clamped to ±1 — past that the warp cannot
                 travel further without a stronger Init Rig sway.

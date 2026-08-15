@@ -343,6 +343,25 @@ function makeProject({ inputKeyforms, outputKeyforms = null }) {
 }
 
 {
+  const rules = [{
+    id: 'rule-spring',
+    inputs: [
+      { paramId: 'ParamWind', type: 'SRC_TO_X', weight: 80 },
+      { paramId: 'ParamAngleX', type: 'SRC_TO_X', weight: 50 },
+    ],
+    vertices: [{ x: 0, y: 0, delay: 0 }],
+    outputs: [{ paramId: 'ParamSpring_hair_0', scale: 1 }],
+  }];
+  const snapshot = JSON.stringify(rules);
+  const tuned = applyBakePhysicsTuning(rules, { wind: 2 });
+  ok(JSON.stringify(rules) === snapshot, '§8 — wind tuning does not mutate input rules');
+  ok(tuned[0].inputs[0].weight === 160, `§8 — wind 2 doubles ParamWind weight (got ${tuned[0].inputs[0].weight})`);
+  ok(tuned[0].inputs[1].weight === 50, '§8 — wind leaves non-ParamWind input weights');
+  const ident = applyBakePhysicsTuning(rules, {});
+  ok(ident[0].inputs[0].weight === 80, '§8 — omitted wind is identity on ParamWind weight');
+}
+
+{
   let threw = false;
   try { normalizeBakePhysicsTuning({ wiggle: Number.NaN }); }
   catch { threw = true; }

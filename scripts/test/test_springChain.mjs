@@ -21,7 +21,11 @@ import {
 import { gatherPhysicsRules } from '../../src/io/live2d/rig/physicsConfig.js';
 import { buildMotion3 } from '../../src/io/live2d/idle/builder.js';
 import { IDLE_PARAMS } from '../../src/io/live2d/idle/paramDefaults.js';
-import { bakeTargetLabel } from '../../src/v3/operators/bakePhysics.js';
+import {
+  bakeTargetLabel,
+  groupPhysicsBakeTargets,
+  listPhysicsBakeTargets,
+} from '../../src/v3/operators/bakePhysics.js';
 import { migrateProject, CURRENT_SCHEMA_VERSION } from '../../src/store/projectMigrations.js';
 
 let passed = 0;
@@ -233,7 +237,39 @@ expect('idle gen keys ParamWind and skips spring outputs', () => {
 
 expect('bakeTargetLabel names spring joints', () => {
   assert.equal(bakeTargetLabel('ParamSpring_part_hair_0'), 'Spring 1');
+  assert.equal(bakeTargetLabel('ParamSpring_part_hair_0', 'Spring Chain', 'back hair'), 'back hair · Spring 1');
   assert.equal(bakeTargetLabel('ParamHairBack'), 'Hair Back');
+});
+
+expect('listPhysicsBakeTargets groups springs by part name', () => {
+  const project = makeHairProject();
+  addSpringChain(project, 'part_hair', { jointCount: 2 });
+  project.nodes.push({
+    id: 'part_strap',
+    type: 'part',
+    name: 'neckwear',
+    mesh: { vertices: [0, 0, 10, 0, 0, 20], triangles: [0, 1, 2] },
+  });
+  project.nodes.push({
+    id: 'warp_strap',
+    type: 'deformer',
+    deformerKind: 'warp',
+    targetPartId: 'part_strap',
+    gridSize: { cols: 2, rows: 3 },
+    baseGrid: project.nodes[1].baseGrid,
+    bindings: [],
+    keyforms: [],
+  });
+  addSpringChain(project, 'part_strap', { jointCount: 2 });
+  const targets = listPhysicsBakeTargets(project);
+  const groups = groupPhysicsBakeTargets(targets);
+  const springGroups = groups.filter((g) => g.kind === 'spring');
+  assert.equal(springGroups.length, 2);
+  const labels = springGroups.map((g) => g.label).sort();
+  assert.deepEqual(labels, ['back hair', 'neckwear']);
+  for (const g of springGroups) {
+    assert.ok(g.items.every((t) => t.label.startsWith('Spring ')));
+  }
 });
 
 expect('v52 migration seeds springChains and bumps schema', () => {
