@@ -12,6 +12,7 @@ import {
   genConstant,
   genSine,
   genWander,
+  genGusts,
   clampKeyframes,
   applyPersonality,
 } from '../../src/io/live2d/idle/motionLib.js';
@@ -119,6 +120,45 @@ function near(a, b, eps = 1e-6) {
   // Different seed → different curve
   const kfs3 = genWander({ durationMs: 2000, amplitude: 0.5, seed: 99 });
   assert(kfs3[5].value !== kfs1[5].value, 'genWander: different seed → different');
+}
+
+// ── genGusts: loop-safe slams, not a calm wander ─────────────────
+
+{
+  const kfs1 = genGusts({ durationMs: 8000, amplitude: 0.9, seed: 42 });
+  const kfs2 = genGusts({ durationMs: 8000, amplitude: 0.9, seed: 42 });
+  let same = kfs1.length === kfs2.length;
+  if (same) for (let i = 0; i < kfs1.length; i++) {
+    if (!near(kfs1[i].value, kfs2[i].value) || !near(kfs1[i].time, kfs2[i].time)) {
+      same = false; break;
+    }
+  }
+  assert(same, 'genGusts: same seed → identical curve');
+  assert(near(kfs1[0].value, 0) && near(kfs1[kfs1.length - 1].value, 0),
+    'genGusts: endpoints at rest');
+  assert(near(kfs1[0].time, 0) && near(kfs1[kfs1.length - 1].time, 8000),
+    'genGusts: spans duration');
+  assert(kfs1.every((kf) => kf.interpolation === 'linear'),
+    'genGusts: linear attack (no bezier calm-down)');
+
+  const peaks = kfs1.filter((kf) => Math.abs(kf.value) > 0.4);
+  assert(peaks.length >= 2, `genGusts: at least one slam (got ${peaks.length} peak keys)`);
+  const signs = new Set(peaks.map((kf) => Math.sign(kf.value)));
+  assert(signs.has(1) || signs.has(-1), 'genGusts: signed peaks');
+
+  // Attack slope must be gust-like, not wander-like. 0.9 over 90ms ≈ 10 /s.
+  let maxSlope = 0;
+  for (let i = 1; i < kfs1.length; i++) {
+    const dt = (kfs1[i].time - kfs1[i - 1].time) / 1000;
+    if (dt <= 1e-6) continue;
+    const slope = Math.abs(kfs1[i].value - kfs1[i - 1].value) / dt;
+    if (slope > maxSlope) maxSlope = slope;
+  }
+  assert(maxSlope > 4, `genGusts: sudden attack (max |dv/dt|=${maxSlope.toFixed(2)} /s)`);
+
+  const other = genGusts({ durationMs: 8000, amplitude: 0.9, seed: 99 });
+  assert(other.some((kf, i) => Math.abs(kf.value - (kfs1[i]?.value ?? 0)) > 1e-3),
+    'genGusts: different seed → different curve');
 }
 
 // ── clampKeyframes ───────────────────────────────────────────────

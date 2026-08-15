@@ -111,6 +111,46 @@ assertThrows(() => buildMotion3({ paramIds: [], durationSec: NaN }),
   // validateMotion3 returns no errors for our own output
   assert(result.validationErrors.length === 0,
     'validateMotion3: no errors for produced motion3');
+
+  // Dense generators (wander / sine) are thinned — an 8 s clip at 30 fps
+  // must not plant a key on every frame.
+  const wander = result.paramKeyframes.get('ParamAngleX');
+  assert(wander && wander.length >= 2 && wander.length < 40,
+    `ParamAngleX thinned below 40 keys (got ${wander?.length})`);
+  assert(wander[0].interpolation === 'bezier',
+    'thinned wander uses bezier interpolation');
+}
+
+{
+  const result = buildMotion3({
+    paramIds: ['ParamBreath'],
+    durationSec: 8,
+    fps: 30,
+  });
+  const breath = result.paramKeyframes.get('ParamBreath');
+  // genSine would emit 121 linear samples for 2 cycles; thinning must
+  // leave a handful of bezier keys, not a per-frame polygon.
+  assert(breath && breath.length >= 4 && breath.length < 30,
+    `ParamBreath thinned below 30 keys (got ${breath?.length})`);
+  assert(breath.every((kf) => kf.interpolation === 'bezier'),
+    'thinned sine uses bezier interpolation');
+}
+
+{
+  const result = buildMotion3({
+    paramIds: ['ParamWind'],
+    durationSec: 8,
+    fps: 30,
+    seed: 1,
+  });
+  const wind = result.paramKeyframes.get('ParamWind');
+  assert(wind && wind.length >= 4, `ParamWind gusts emitted (got ${wind?.length})`);
+  assert(wind.every((kf) => kf.interpolation === 'linear'),
+    'ParamWind gusts stay linear (not bezier-thinned)');
+  const peak = Math.max(...wind.map((kf) => Math.abs(kf.value)));
+  assert(peak > 0.4, `ParamWind reaches a gust peak (got ${peak.toFixed(3)})`);
+  assert(Math.abs(wind[0].value) < 1e-6 && Math.abs(wind[wind.length - 1].value) < 1e-6,
+    'ParamWind loop-safe at rest');
 }
 
 // ── buildIdleMotion3 alias ────────────────────────────────────────

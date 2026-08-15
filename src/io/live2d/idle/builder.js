@@ -9,7 +9,7 @@
  */
 
 import {
-  genConstant, genSine, genWander, genBlink, genBurst, genSyllables,
+  genConstant, genSine, genWander, genBlink, genBurst, genGusts, genSyllables,
   genPoseHold,
   clampKeyframes, applyPersonality, makeRng,
 } from './motionLib.js';
@@ -20,7 +20,8 @@ import {
 import {
   encodeKeyframesToSegments, countSegmentsAndPoints,
 } from '../motion3json.js';
-import { buildParamFCurve } from '../../../anim/animationFCurve.js';
+import { buildParamFCurve, normalizeKeyforms } from '../../../anim/animationFCurve.js';
+import { selectSparseKeyframes } from '../../../anim/simplifyKeyframes.js';
 
 export { PERSONALITY_PRESETS, PRESET_NAMES, PRESETS, isImplicitlySkipped };
 
@@ -72,6 +73,38 @@ export function makeLoopingCyclesModifier() {
  */
 
 const VALID_PERSONALITIES = new Set(PERSONALITY_PRESETS);
+
+/** Generators that emit a dense sample polygon. Blink / burst /
+ *  syllables / constant already plant only the event keys they need. */
+const DENSE_KINDS = new Set(['sine', 'wander', 'poseHold']);
+
+/**
+ * Keep endpoints + extrema + samples interpolation cannot reconstruct,
+ * then mark the survivors as bezier so the F-curve editor / Cubism
+ * export ease between them instead of carrying a key on every sample.
+ *
+ * @param {Array<{time:number, value:number, interpolation?:string}>} kfs
+ * @param {number} min
+ * @param {number} max
+ * @returns {typeof kfs}
+ */
+function thinDenseKeyframes(kfs, min, max) {
+  const sparse = selectSparseKeyframes(kfs);
+  if (sparse.length < 2) return kfs;
+  const bezier = sparse.map((kf) => ({
+    ...kf,
+    interpolation: 'bezier',
+    handleType: { left: 'auto', right: 'auto' },
+  }));
+  // Auto handles can overshoot the param range (the old breath-snap
+  // bug). Clamp, then freeze as free so a later recalcKeyformHandles
+  // (buildParamFCurve / export) cannot recreate the overshoot.
+  const clamped = clampKeyframes(normalizeKeyforms(bezier), min, max);
+  return clamped.map((kf) => ({
+    ...kf,
+    handleType: { left: 'free', right: 'free' },
+  }));
+}
 
 /** Per-seed breath strength is drawn in [FLOOR·cap .. cap] — half-to-full depth
  *  so no two seeds breathe the same, without ever flat-lining to zero. */
@@ -127,7 +160,7 @@ function synthesiseKeyframes(paramId, def, durationMs, personality, seed, maxBre
   // and Cubism playback shows a visible snap at the param boundary.
   // Mid is honoured as authored — if the user set mid=0.5 they want
   // breath centered, so we reduce amplitude rather than re-center.
-  if ((def.kind === 'sine' || def.kind === 'wander')
+  if ((def.kind === 'sine' || def.kind === 'wander' || def.kind === 'gust')
       && typeof cfg.amplitude === 'number'
       && Number.isFinite(def.defaultMin)
       && Number.isFinite(def.defaultMax)) {
@@ -194,6 +227,20 @@ function synthesiseKeyframes(paramId, def, durationMs, personality, seed, maxBre
         peakValue: cfg.peakValue,
         restValue: cfg.restValue ?? 0,
         seed: seed * 23 + hashCode(paramId),
+      });
+      break;
+    case 'gust':
+      kfs = genGusts({
+        durationMs,
+        amplitude: cfg.amplitude ?? 0.9,
+        peakMinFrac: cfg.peakMinFrac ?? 0.55,
+        period: cfg.period ?? 2200,
+        intervalJitterMs: cfg.intervalJitterMs ?? 800,
+        attackMs: cfg.attackMs ?? 90,
+        holdMs: cfg.holdMs ?? 160,
+        decayMs: cfg.decayMs ?? 420,
+        restValue: cfg.restValue ?? 0,
+        seed: seed * 47 + hashCode(paramId),
       });
       break;
     case 'syllables':
@@ -379,8 +426,12 @@ export function buildMotion3({
 
   for (const id of targetParams) {
     const def = presetTable[id];
-    const kfs = synthesiseKeyframes(id, def, durationMs, personality, seed, maxBreathStrength);
+    let kfs = synthesiseKeyframes(id, def, durationMs, personality, seed, maxBreathStrength);
     if (!kfs || kfs.length < 2) continue;
+    if (DENSE_KINDS.has(def.kind)) {
+      kfs = thinDenseKeyframes(kfs, def.defaultMin, def.defaultMax);
+      if (!kfs || kfs.length < 2) continue;
+    }
 
     const segments = encodeKeyframesToSegments(kfs, durationSec);
     if (segments.length === 0) continue;

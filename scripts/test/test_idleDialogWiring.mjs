@@ -119,9 +119,9 @@ expect('wander shiftToRest pins kf[0] to defaultRest', () => {
   assert.ok(kfs && kfs.length >= 2, 'ParamAngleX has keyforms');
   assert.ok(Math.abs(kfs[0].value - 0) < 1e-6,
     `kfs[0].value should be 0 (defaultRest), got ${kfs[0].value}`);
-  // Linear segments — no handle objects.
-  assert.strictEqual(kfs[0].interpolation, 'linear',
-    `kfs[0].interpolation should be 'linear' post-R7, got ${kfs[0].interpolation}`);
+  // Dense wander is thinned to bezier so interpolation fills the gaps.
+  assert.strictEqual(kfs[0].interpolation, 'bezier',
+    `kfs[0].interpolation should be 'bezier' after thinning, got ${kfs[0].interpolation}`);
 });
 
 // Regression — amplitude clamp + handle clamp eliminate the

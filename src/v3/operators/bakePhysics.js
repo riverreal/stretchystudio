@@ -86,6 +86,7 @@ import { gatherPhysicsRules } from '../../io/live2d/rig/physicsConfig.js';
 import { createPhysicsState, tickPhysics, buildParamSpecs } from '../../io/live2d/runtime/physicsTick.js';
 import { computeParamOverrides } from '../../renderer/animationEngine.js';
 import { insertKeyformAtInAction, INSERTKEY_FLAGS } from '../../anim/insertKeyframe.js';
+import { selectSparseKeyframesGrouped } from '../../anim/simplifyKeyframes.js';
 import { sanitisePartName } from '../../lib/partId.js';
 import { getBoneRole } from '../../store/objectDataAccess.js';
 
@@ -94,9 +95,9 @@ import { getBoneRole } from '../../store/objectDataAccess.js';
  * @property {number} [wiggle=1]  Global output-scale multiplier.
  * @property {number} [lag=1]     Pendulum delay multiplier (bounce).
  * @property {number} [wind=1]    ParamWind input-weight multiplier.
- *   Live preview drag is a full ±1; idle wander is milder. Raise
- *   this so the bake feels like the drag, without rewriting the
- *   ParamWind fcurve.
+ *   Scales the ParamWind input weight. Idle now keys gusts (sudden
+ *   ± slams); this still lets a bake hit harder or softer without
+ *   rewriting the ParamWind fcurve.
  * @property {Record<string, number>} [outputStrength]  Per-output
  *   paramId multiplier, composed with `wiggle`. Missing keys = 1.
  */
@@ -427,6 +428,16 @@ function rnaPathForBakedOutput(project, paramId) {
  *   multiplier. Identity = 1.
  * @property {Record<string, number>} [outputStrength] - Per-output
  *   paramId multiplier, composed with `wiggle`. Missing keys = 1.
+ * @property {boolean} [simplifyKeys=true] - After simulating every
+ *   frame, keep only the keyforms interpolation cannot reconstruct
+ *   (endpoints, extrema, and samples past the error tolerance).
+ *   Simulation still steps at `stepMs`; this only thins what is
+ *   written. Set false to write one key per sample.
+ * @property {number} [simplifyRelativeTolerance] - Fraction of each
+ *   curve's value range used as the keep-threshold. Default 0.03.
+ * @property {number} [simplifyTolerance] - Absolute value error
+ *   override for key reduction. When finite, wins over the relative
+ *   tolerance.
  */
 
 /**
@@ -669,8 +680,19 @@ export function applyBakePhysics(project, actionId, options) {
   }
   action.fcurves = action.fcurves.filter((fc) => !bakedRnaPaths.has(fc?.rnaPath));
 
+  // Simulate densely (bakePhysics already did), write sparsely.
+  // Bezier auto-handles on insert fill the gaps; springs in
+  // particular stop planting a key on every frame.
+  const simplify = options?.simplifyKeys !== false;
+  const toWrite = simplify
+    ? selectSparseKeyframesGrouped(result.records, 'rnaPath', {
+      relativeTolerance: options?.simplifyRelativeTolerance,
+      tolerance: options?.simplifyTolerance,
+    })
+    : result.records;
+
   let keysWritten = 0;
-  for (const rec of result.records) {
+  for (const rec of toWrite) {
     const r = insertKeyformAtInAction(action, rec.rnaPath, rec.time, rec.value, INSERTKEY_FLAGS.NOFLAGS);
     if (r?.status && r.status.startsWith('skipped-')) continue;
     keysWritten++;

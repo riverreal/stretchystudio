@@ -7,6 +7,7 @@
  *   - 'sine'      : single-frequency oscillation (breath, body sway)
  *   - 'blink'     : eye open/close events (eye open params)
  *   - 'burst'     : periodic accent events (nods, glances)
+ *   - 'gust'      : sudden ± slams (ParamWind — pendulums need impulses)
  *   - 'syllables' : speech-like mouth pulses (talking)
  *   - 'constant'  : pin at default rest value (mouth/expression at rest)
  *
@@ -275,8 +276,32 @@ export const LOOK_SET = Object.freeze([
   'tiltLeft', 'tiltRight',
 ]);
 
-const WIND_LOOP = { ...r('ParamWind'), kind: 'wander', cfg: { amplitude: 0.85, harmonics: 2, mid: 0, samples: 18 } };
-const WIND_HOLD = { ...r('ParamWind'), kind: 'sine',   cfg: { amplitude: 0.45, period: 4500, phase: 0 } };
+const WIND_LOOP = {
+  ...r('ParamWind'),
+  kind: 'gust',
+  cfg: {
+    amplitude: 0.9,
+    peakMinFrac: 0.55,
+    period: 2200,
+    intervalJitterMs: 800,
+    attackMs: 90,
+    holdMs: 160,
+    decayMs: 420,
+  },
+};
+const WIND_HOLD = {
+  ...r('ParamWind'),
+  kind: 'gust',
+  cfg: {
+    amplitude: 0.7,
+    peakMinFrac: 0.5,
+    period: 2800,
+    intervalJitterMs: 600,
+    attackMs: 90,
+    holdMs: 140,
+    decayMs: 380,
+  },
+};
 for (const entry of Object.values(PRESETS)) {
   if (!entry?.params || entry.params.ParamWind) continue;
   entry.params.ParamWind = (entry.cycleType === 'hold') ? WIND_HOLD : WIND_LOOP;

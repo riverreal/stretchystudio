@@ -309,6 +309,67 @@ export function genBurst({
 }
 
 /**
+ * Wind gusts — rest, then occasional slams to a random ±peak.
+ *
+ * Cubism pendulums (spring chains, hair) track a slow input with almost
+ * no visible lag. They only wave when the drive jumps and delayed
+ * particles get left behind — the same impulse a live ±1 ParamWind
+ * drag produces. A calm wander / sine never does that, no matter how
+ * high the bake Wind multiplier is.
+ *
+ * Each gust is four linear keys (sparse, not a dense polygon):
+ *   rest → (attackMs) peak → (holdMs) peak → (decayMs) rest
+ * Attack stays linear so physics bake sees a real discontinuity.
+ * Signs prefer to alternate. Loop-safe: endpoints stay at restValue
+ * and gusts are scheduled inside [edgeBufferMs, D-edgeBufferMs].
+ */
+export function genGusts({
+  durationMs,
+  amplitude = 0.9,
+  peakMinFrac = 0.55,
+  period = 2200,
+  intervalJitterMs = 800,
+  attackMs = 90,
+  holdMs = 160,
+  decayMs = 420,
+  restValue = 0,
+  edgeBufferMs = 500,
+  seed = 1,
+}) {
+  const D = durationMs;
+  const rng = makeRng(seed);
+  const gustDur = Math.max(1, attackMs + holdMs + decayMs);
+  const minSpacing = gustDur + 350;
+  const frac = Math.max(0, Math.min(1, peakMinFrac));
+
+  const gusts = [];
+  let t = edgeBufferMs + rng() * Math.max(1, period);
+  let lastSign = rng() < 0.5 ? 1 : -1;
+  while (t + gustDur < D - edgeBufferMs) {
+    const sign = lastSign * (rng() < 0.75 ? -1 : 1);
+    lastSign = sign;
+    const mag = amplitude * (frac + rng() * (1 - frac));
+    gusts.push({ t, peak: sign * mag });
+    const jitter = (rng() * 2 - 1) * intervalJitterMs;
+    t += Math.max(minSpacing, period + jitter);
+  }
+
+  const kfs = [{ time: 0, value: restValue, interpolation: 'linear' }];
+  for (const g of gusts) {
+    const last = kfs[kfs.length - 1];
+    if (Math.abs(last.time - g.t) > 1 || Math.abs(last.value - restValue) > 1e-6) {
+      kfs.push({ time: g.t, value: restValue, interpolation: 'linear' });
+    }
+    kfs.push({ time: g.t + attackMs, value: g.peak, interpolation: 'linear' });
+    kfs.push({ time: g.t + attackMs + holdMs, value: g.peak, interpolation: 'linear' });
+    kfs.push({ time: g.t + gustDur, value: restValue, interpolation: 'linear' });
+  }
+  kfs.push({ time: D, value: restValue, interpolation: 'linear' });
+  kfs.sort((a, b) => a.time - b.time);
+  return kfs;
+}
+
+/**
  * Speech-like mouth pulses — continuous sequence of small open/close events
  * at speech tempo (~3-4 syllables/sec). Each pulse: rest → random peak → rest.
  *

@@ -244,9 +244,10 @@ export function IdleMotionDialog({ open, onOpenChange }) {
             Generate idle motion
           </DialogTitle>
           <DialogDescription>
-            Synthesises a procedural Live2D motion (head wander, breath, blinks, wind)
+            Synthesises a procedural Live2D motion (head wander, breath, blinks, wind gusts)
             and adds it as a new action. Physics outputs (hair, clothing, spring chains)
-            are baked onto the action when rules exist.
+            are baked onto the action when rules exist. Dense curves keep only the
+            keyframes interpolation cannot reconstruct.
           </DialogDescription>
         </DialogHeader>
 

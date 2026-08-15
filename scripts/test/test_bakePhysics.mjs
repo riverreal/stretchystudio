@@ -212,6 +212,27 @@ function makeProject({ inputKeyforms, outputKeyforms = null }) {
   );
   ok(inFcurve != null && inFcurve.keyforms.length === 3,
     '§5 — input fcurve preserved unchanged');
+  // Simulation still visits every frame; written keys are a subset.
+  ok(result.keysWritten < result.sampleCount,
+    `§5 — thinned keys (${result.keysWritten}) < samples (${result.sampleCount})`);
+  ok(outFcurve.keyforms.length === result.keysWritten,
+    '§5 — written key count matches output fcurve');
+}
+
+{
+  const project = makeProject({
+    inputKeyforms: [
+      { time: 0, value: 0, interpolation: 'linear' },
+      { time: 500, value: 10, interpolation: 'linear' },
+      { time: 1000, value: 0, interpolation: 'linear' },
+    ],
+  });
+  const dense = applyBakePhysics(project, 'act-A', {
+    frameStartMs: 0, frameEndMs: 1000, stepMs: 1000 / 24, preRollMs: 100,
+    simplifyKeys: false,
+  });
+  ok(dense.keysWritten === dense.sampleCount,
+    `§5 — simplifyKeys:false writes one key per sample (${dense.keysWritten} === ${dense.sampleCount})`);
 }
 
 // ── §6 — applyBakePhysics REPLACES existing output fcurve ────────────

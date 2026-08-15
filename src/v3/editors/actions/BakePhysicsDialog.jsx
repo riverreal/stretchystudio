@@ -154,8 +154,7 @@ export function BakePhysicsDialog({ open, onOpenChange }) {
                 onChange={(e) => setWind(numOr(e.target.value, 1))}
               />
               <span className="text-[10px] text-muted-foreground">
-                How hard ParamWind pushes the pendulums. Live drag is a full ±1;
-                idle wander is milder — try 1.5–2 to match the preview.
+                How hard ParamWind gusts push the pendulums. 1 = authored weight.
               </span>
             </div>
           </div>
