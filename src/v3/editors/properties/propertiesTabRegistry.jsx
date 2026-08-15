@@ -142,7 +142,7 @@ export const PROPERTIES_TABS = [
     id: 'physics',
     label: 'Physics',
     icon: <Zap size={14} />,
-    sectionIds: ['physics'],
+    sectionIds: ['springChain', 'physics'],
   },
   {
     id: 'data',
