@@ -281,6 +281,9 @@
  * @property {string|null} [innermostBodyWarpId]
  *   ID of the innermost body warp (typically `'BodyXWarp'`). Mesh
  *   `parent_deformer_index` defaults to this in moc3.
+ * @property {Record<string, {minX:number, minY:number, maxX:number, maxY:number}>} [warpRestBboxes]
+ *   Lifted-rest canvas-px bbox per warp id. ART_MESH_EVAL converts
+ *   leftover canvas-px keyforms into warp-local 0..1 with these.
  * @property {Object} [debug]              - Optional rig debug log; mirrors the
  *                                            existing `rigDebugLog` shape so
  *                                            cmo3writer can keep emitting it
@@ -314,6 +317,7 @@ export function emptyRigSpec(canvas) {
     canvasToInnermostY: null,
     innermostBodyWarpId: null,
     bodyWarpChain: null,
+    warpRestBboxes: {},
     debug: null,
   };
 }

@@ -741,6 +741,128 @@ logger.info = () => {};
     `violations: ${JSON.stringify(r.violations)}`);
 }
 
+// I-9/I-21 regression: extras/objects with canvas-px keyforms under
+// BodyXWarp. Pre-fix, ART_MESH_EVAL treated 496px as a UV → Cubism
+// far-field bbox ~100000px (I-9 + I-21). Kernel converts to warp-local
+// before the lift so rest-pose eval stays near authored mesh.vertices.
+{
+  const project = {
+    canvas: { width: 1024, height: 1024 },
+    parameters: [],
+    nodes: [
+      {
+        id: 'BodyXWarp', type: 'deformer', deformerKind: 'warp',
+        name: 'BX', parent: null, visible: true,
+        gridSize: { rows: 1, cols: 1 },
+        baseGrid: [0, 0, 1024, 0, 0, 1024, 1024, 1024],
+        localFrame: 'canvas-px',
+        bindings: [],
+        keyforms: [{ keyTuple: [], positions: [0, 0, 1024, 0, 0, 1024, 1024, 1024], opacity: 1 }],
+      },
+      {
+        id: 'torso', type: 'group', name: 'torso', boneRole: 'torso',
+        transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, pivotX: 512, pivotY: 512 },
+        pose: { rotation: 0, x: 0, y: 0, scaleX: 1, scaleY: 1 },
+      },
+      {
+        id: 'objects', type: 'part', name: 'objects',
+        modifiers: [
+          { type: 'lattice', objectId: 'BodyXWarp', enabled: true, mode: 3 },
+          { type: 'armature', deformerId: 'torso', enabled: true, mode: 3,
+            data: { jointBoneId: 'torso' } },
+        ],
+        mesh: {
+          vertices: [{ x: 496, y: 0 }, { x: 750, y: 0 }, { x: 750, y: 314 }, { x: 496, y: 314 }],
+          triangles: [0, 1, 2, 0, 2, 3],
+          uvs: [0, 0, 1, 0, 1, 1, 0, 1],
+          jointBoneId: 'torso',
+          boneWeights: [1, 1, 1, 1],
+          runtime: {
+            bindings: [],
+            keyforms: [{
+              keyTuple: [],
+              vertexPositions: [496, 0, 750, 0, 750, 314, 496, 314],
+              opacity: 1,
+            }],
+          },
+        },
+      },
+    ],
+  };
+  const r = runRigInvariantChecks(project);
+  assert((r.byInvariant['I-9'] ?? 0) === 0,
+    'I-9 clean: canvas-px objects under BodyXWarp do not explode',
+    `byInvariant=${JSON.stringify(r.byInvariant)} violations=${JSON.stringify(r.violations)}`);
+  assert((r.byInvariant['I-21'] ?? 0) === 0,
+    'I-21 clean: rest-pose objects stay near authored center',
+    `byInvariant=${JSON.stringify(r.byInvariant)} violations=${JSON.stringify(r.violations)}`);
+}
+
+// Same explosion class, but BodyXWarp is nested (0..1 cage under a
+// canvas-px BodyZ). getWarpRestGrid(BodyX) is UV-sized and must NOT be
+// used as the conversion bbox — the kernel has to take the lifted rest.
+{
+  const project = {
+    canvas: { width: 1024, height: 1024 },
+    parameters: [],
+    nodes: [
+      {
+        id: 'BodyZWarp', type: 'deformer', deformerKind: 'warp',
+        name: 'BZ', parent: null, visible: true,
+        gridSize: { rows: 1, cols: 1 },
+        baseGrid: [0, 0, 1024, 0, 0, 1024, 1024, 1024],
+        localFrame: 'canvas-px',
+        bindings: [],
+        keyforms: [{ keyTuple: [], positions: [0, 0, 1024, 0, 0, 1024, 1024, 1024], opacity: 1 }],
+      },
+      {
+        id: 'BodyXWarp', type: 'deformer', deformerKind: 'warp',
+        name: 'BX', parent: 'BodyZWarp', visible: true,
+        gridSize: { rows: 1, cols: 1 },
+        baseGrid: [0, 0, 1, 0, 0, 1, 1, 1],
+        localFrame: 'normalized-0to1',
+        bindings: [],
+        keyforms: [{ keyTuple: [], positions: [0, 0, 1, 0, 0, 1, 1, 1], opacity: 1 }],
+      },
+      {
+        id: 'torso', type: 'group', name: 'torso', boneRole: 'torso',
+        transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, pivotX: 512, pivotY: 512 },
+        pose: { rotation: 0, x: 0, y: 0, scaleX: 1, scaleY: 1 },
+      },
+      {
+        id: 'objects', type: 'part', name: 'objects',
+        modifiers: [
+          { type: 'lattice', objectId: 'BodyXWarp', enabled: true, mode: 3 },
+          { type: 'armature', deformerId: 'torso', enabled: true, mode: 3,
+            data: { jointBoneId: 'torso' } },
+        ],
+        mesh: {
+          vertices: [{ x: 496, y: 0 }, { x: 750, y: 0 }, { x: 750, y: 314 }, { x: 496, y: 314 }],
+          triangles: [0, 1, 2, 0, 2, 3],
+          uvs: [0, 0, 1, 0, 1, 1, 0, 1],
+          jointBoneId: 'torso',
+          boneWeights: [1, 1, 1, 1],
+          runtime: {
+            bindings: [],
+            keyforms: [{
+              keyTuple: [],
+              vertexPositions: [496, 0, 750, 0, 750, 314, 496, 314],
+              opacity: 1,
+            }],
+          },
+        },
+      },
+    ],
+  };
+  const r = runRigInvariantChecks(project);
+  assert((r.byInvariant['I-9'] ?? 0) === 0,
+    'I-9 clean: canvas-px objects under nested BodyXWarp do not explode',
+    `byInvariant=${JSON.stringify(r.byInvariant)} violations=${JSON.stringify(r.violations)}`);
+  assert((r.byInvariant['I-21'] ?? 0) === 0,
+    'I-21 clean: nested BodyX rest-pose objects stay near authored center',
+    `byInvariant=${JSON.stringify(r.byInvariant)} violations=${JSON.stringify(r.violations)}`);
+}
+
 // ── degenerate input: null project / empty nodes ──────────────────────
 {
   const r1 = runRigInvariantChecks(null);

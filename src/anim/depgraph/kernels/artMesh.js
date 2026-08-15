@@ -298,6 +298,7 @@ export function kernelArtMeshEval(op, ctx) {
         lift = computePerPartLift(deformerId, chainAbove, ctx);
       }
       if (lift?.lifted) {
+        ensureWarpLocalBeforeLift(bufA, len, deformerId, lift, ctx);
         evalWarpKernelCubism(
           lift.lifted, lift.gridSize, lift.isQuad,
           bufA, bufB, len >> 1,
@@ -311,6 +312,7 @@ export function kernelArtMeshEval(op, ctx) {
       const keyKey = `${deformerId}/${NodeType.GEOMETRY}/${OperationCode.KEYFORM_EVAL}`;
       const keyState = ctx.outputs.get(keyKey);
       if (keyState?.grid) {
+        ensureWarpLocalBeforeLift(bufA, len, deformerId, { lifted: keyState.grid }, ctx);
         evalWarpKernelCubism(
           keyState.grid, keyState.gridSize,
           keyState.isQuadTransform === true,
@@ -824,4 +826,114 @@ function blendKeyforms(keyforms, cell, fallbackDrawOrder) {
   }
   const drawOrder = heaviestKf?.drawOrder ?? fallbackDrawOrder;
   return { vertexPositions: out, opacity, drawOrder };
+}
+
+/** Warp-local extras can sit slightly outside [0,1]; canvas-px verts are hundreds. */
+const _CANVAS_PX_FLOOR = 4;
+
+/**
+ * Cubism warp eval treats every input as a 0..1 UV. Init Rig persist
+ * can leave extras/objects keyforms in canvas-px; feeding those through
+ * `evalWarpKernelCubism` hits the far-field path (u=496 → ~100000px)
+ * and the part disappears. Convert in place using the warp's REST
+ * canvas bbox so the subsequent lift is identity at rest and follows
+ * the deformed grid when the body warp animates.
+ *
+ * @param {Float32Array} buf
+ * @param {number} len
+ * @param {string} deformerId
+ * @param {{lifted?: ArrayLike<number>}|null} lift
+ * @param {import('../eval.js').EvalContext} ctx
+ */
+function ensureWarpLocalBeforeLift(buf, len, deformerId, lift, ctx) {
+  if (!bufferLooksLikeCanvasPx(buf, len)) return;
+  const bbox = resolveWarpRestBbox(deformerId, lift, ctx);
+  if (!bbox) return;
+  convertCanvasPxToWarpLocal(buf, len, bbox);
+}
+
+/**
+ * @param {ArrayLike<number>} buf
+ * @param {number} len
+ * @returns {boolean}
+ */
+function bufferLooksLikeCanvasPx(buf, len) {
+  for (let i = 0; i < len; i++) {
+    const n = buf[i];
+    if (typeof n === 'number' && Number.isFinite(n) && Math.abs(n) > _CANVAS_PX_FLOOR) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Prefer the selectRigSpec lifted-rest bbox (correct under animation).
+ * Fall back to a canvas-px rest cage, then the current lifted grid
+ * (identity at rest; does not follow when the warp deforms).
+ *
+ * Nested BodyX cages are 0..1 — those bboxes are rejected so we do
+ * not treat UV space as canvas-px.
+ *
+ * @param {string} deformerId
+ * @param {{lifted?: ArrayLike<number>}|null} lift
+ * @param {import('../eval.js').EvalContext} ctx
+ * @returns {{minX:number, minY:number, maxX:number, maxY:number}|null}
+ */
+function resolveWarpRestBbox(deformerId, lift, ctx) {
+  const fromSpec = ctx.warpRestBboxById?.get(deformerId);
+  if (isCanvasPxBbox(fromSpec)) return fromSpec;
+
+  const node = ctx._artMeshByIdCache?.get(deformerId)
+    ?? (ctx.project?.nodes ?? []).find((n) => n?.id === deformerId);
+  if (node) {
+    const rest = getWarpRestGrid(node, ctx.project);
+    const restBb = bboxOfPairs(rest);
+    if (isCanvasPxBbox(restBb)) return restBb;
+  }
+
+  const liftBb = bboxOfPairs(lift?.lifted);
+  return isCanvasPxBbox(liftBb) ? liftBb : null;
+}
+
+/**
+ * @param {ArrayLike<number>|null|undefined} arr
+ * @returns {{minX:number, minY:number, maxX:number, maxY:number}|null}
+ */
+function bboxOfPairs(arr) {
+  if (!arr || arr.length < 2) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let i = 0; i < arr.length; i += 2) {
+    const x = arr[i], y = arr[i + 1];
+    if (Number.isFinite(x)) { if (x < minX) minX = x; if (x > maxX) maxX = x; }
+    if (Number.isFinite(y)) { if (y < minY) minY = y; if (y > maxY) maxY = y; }
+  }
+  if (!Number.isFinite(minX) || !Number.isFinite(maxX)) return null;
+  return { minX, minY, maxX, maxY };
+}
+
+/**
+ * @param {{minX:number, minY:number, maxX:number, maxY:number}|null|undefined} bb
+ * @returns {boolean}
+ */
+function isCanvasPxBbox(bb) {
+  if (!bb) return false;
+  const w = bb.maxX - bb.minX;
+  const h = bb.maxY - bb.minY;
+  return w > _CANVAS_PX_FLOOR && h > _CANVAS_PX_FLOOR;
+}
+
+/**
+ * @param {Float32Array} buf
+ * @param {number} len
+ * @param {{minX:number, minY:number, maxX:number, maxY:number}} bbox
+ */
+function convertCanvasPxToWarpLocal(buf, len, bbox) {
+  const w = bbox.maxX - bbox.minX;
+  const h = bbox.maxY - bbox.minY;
+  if (!(w > 0) || !(h > 0)) return;
+  for (let i = 0; i < len; i += 2) {
+    buf[i] = (buf[i] - bbox.minX) / w;
+    buf[i + 1] = (buf[i + 1] - bbox.minY) / h;
+  }
 }

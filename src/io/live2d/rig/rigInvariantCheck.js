@@ -173,6 +173,7 @@ import { OperationCode, NodeType } from '../../../anim/depgraph/types.js';
 import { computeWorldMatrices } from '../../../renderer/transforms.js';
 import { resolveBoneWorldFromCtx } from '../../../anim/depgraph/kernels/bonePostChain.js';
 import { getMesh } from '../../../store/objectDataAccess.js';
+import { selectRigSpec } from './selectRigSpec.js';
 
 /**
  * @typedef {{
@@ -224,6 +225,33 @@ function asNumericVec(vp) {
     return { length: vp.length, get: (i) => /** @type {number} */ (vp[i]) };
   }
   return null;
+}
+
+/**
+ * Viewport eval extras so I-8/I-9/I-20/I-21 use the same keyforms and
+ * warp-rest bboxes as `evalProjectFrameViaDepgraph`. Without these the
+ * kernel blends raw canvas-px `mesh.runtime` and BodyXWarp treats
+ * those as UVs (I-9/I-21 explosion on extras/objects).
+ *
+ * @param {object} project
+ * @returns {{
+ *   rigArtMeshById: Map<string, object>,
+ *   warpRestBboxById: Map<string, {minX:number, minY:number, maxX:number, maxY:number}>,
+ * }}
+ */
+function _evalCtxExtras(project) {
+  const rigSpec = selectRigSpec(project);
+  const rigArtMeshById = new Map();
+  for (const am of rigSpec.artMeshes ?? []) {
+    if (am?.id) rigArtMeshById.set(am.id, am);
+  }
+  const warpRestBboxById = new Map();
+  for (const [id, bb] of Object.entries(rigSpec.warpRestBboxes ?? {})) {
+    if (bb && Number.isFinite(bb.minX) && Number.isFinite(bb.maxX)) {
+      warpRestBboxById.set(id, bb);
+    }
+  }
+  return { rigArtMeshById, warpRestBboxById };
 }
 
 /**
@@ -655,6 +683,7 @@ export function runRigInvariantChecks(project) {
       timeMs: 0,
       paramOverrides: new Map(),
       action: null,
+      ..._evalCtxExtras(project),
     });
     // Canvas dimension — used to bound "reasonable" bbox extent. A
     // mesh extent larger than 100× the canvas is essentially Infinity
@@ -809,6 +838,7 @@ export function runRigInvariantChecks(project) {
         paramOverrides: new Map(),
         action: null,
         artMeshBboxTrace: traceSet,
+        ..._evalCtxExtras(project),
       });
       const results = ctx2.artMeshBboxTraceResults;
       if (results instanceof Map) {
@@ -855,6 +885,7 @@ export function runRigInvariantChecks(project) {
       timeMs: 0,
       paramOverrides: new Map(),
       action: null,
+      ..._evalCtxExtras(project),
     });
     const cw19 = project.canvas?.width ?? project.canvas?.w ?? 2048;
     const ch19 = project.canvas?.height ?? project.canvas?.h ?? 2048;

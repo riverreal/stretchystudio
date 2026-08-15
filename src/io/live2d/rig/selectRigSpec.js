@@ -98,6 +98,7 @@ const EMPTY_PARTS = Object.freeze([]);
 const EMPTY_DEFORMERS = Object.freeze([]);
 const EMPTY_ARTMESHES = Object.freeze([]);
 const EMPTY_PHYSICS = Object.freeze([]);
+const EMPTY_WARP_REST_BBOXES = Object.freeze({});
 
 /** WeakMap<project, RigSpec> — memoization keyed on project identity. */
 const _cache = new WeakMap();
@@ -141,6 +142,7 @@ function _emptyRigSpec() {
     canvasToInnermostX: null,
     canvasToInnermostY: null,
     innermostBodyWarpId: null,
+    warpRestBboxes: EMPTY_WARP_REST_BBOXES,
     debug: { source: 'selectRigSpec', empty: true },
   };
 }
@@ -250,6 +252,14 @@ function _buildRigSpec(project) {
   const w = project.canvas?.width ?? 800;
   const h = project.canvas?.height ?? 600;
 
+  /** @type {Record<string, {minX:number, minY:number, maxX:number, maxY:number}>} */
+  const warpRestBboxes = {};
+  for (const [id, st] of warpRestById) {
+    if (st?.bbox && Number.isFinite(st.bbox.minX) && Number.isFinite(st.bbox.maxX)) {
+      warpRestBboxes[id] = st.bbox;
+    }
+  }
+
   return {
     parameters: project.parameters ?? EMPTY_DEFORMERS,
     parts,
@@ -261,6 +271,7 @@ function _buildRigSpec(project) {
     canvasToInnermostX,
     canvasToInnermostY,
     innermostBodyWarpId,
+    warpRestBboxes,
     debug: { source: 'selectRigSpec' },
   };
 }

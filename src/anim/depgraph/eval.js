@@ -149,6 +149,12 @@ const KERNELS = {
  *   keyforms + bindings) from here instead of raw `mesh.runtime`, so
  *   modifier-toggle reprojection (selectRigSpec `needsReproject`) is
  *   honoured. Null → kernel uses `mesh.runtime`.
+ * @property {Map<string, {minX:number, minY:number, maxX:number, maxY:number}>|null} [warpRestBboxById] -
+ *   selectRigSpec lifted-rest canvas-px bbox per warp id. ART_MESH_EVAL
+ *   uses this to convert leftover canvas-px keyforms into warp-local
+ *   0..1 before `evalWarpKernelCubism` (which treats inputs as UVs).
+ *   Without it, canvas-px verts (u=496) hit Cubism far-field and the
+ *   part renders at ~100000px ("objects disappeared").
  * @property {Set<string>} [artMeshBboxTrace] - I-20 (rigInvariantCheck)
  *   opt-in: when populated, `kernelArtMeshEval` captures per-step bbox
  *   for parts whose id is in the set. Used by the framework to re-eval
@@ -180,6 +186,7 @@ export function evalDepGraph(graph, ctxIn) {
     physics: ctxIn.physics,
     poseOverrides: ctxIn.poseOverrides ?? new Map(),
     rigArtMeshById: ctxIn.rigArtMeshById ?? null,
+    warpRestBboxById: ctxIn.warpRestBboxById ?? null,
     boneMirrorByParam: ctxIn.boneMirrorByParam ?? null,
     artMeshBboxTrace: ctxIn.artMeshBboxTrace,
   };

@@ -143,6 +143,7 @@ export function evalProjectFrameViaDepgraph(project, paramValues, opts = {}) {
     action: opts.action ?? null,
     requiredMode: opts.requiredMode,
     rigArtMeshById: buildRigArtMeshIndex(opts.rigSpec),
+    warpRestBboxById: buildWarpRestBboxIndex(opts.rigSpec),
     poseOverrides: buildPoseOverrideIndex(opts.poseOverrides),
     // Bone-mirror priority gate (RULE №4 — bone is canonical, param is the
     // legacy slot). When an action carries BOTH a procedural
@@ -255,4 +256,25 @@ function buildRigArtMeshIndex(rigSpec) {
     if (am?.id) m.set(am.id, am);
   }
   return m;
+}
+
+/**
+ * Index `rigSpec.warpRestBboxes` by warp id so the ART_MESH_EVAL kernel
+ * can convert leftover canvas-px keyforms into warp-local 0..1 using
+ * the lifted rest bbox (not the current-frame grid, which would pin
+ * the mesh when the body warp animates).
+ *
+ * @param {object|undefined} rigSpec
+ * @returns {Map<string, {minX:number, minY:number, maxX:number, maxY:number}>|null}
+ */
+function buildWarpRestBboxIndex(rigSpec) {
+  const src = rigSpec?.warpRestBboxes;
+  if (!src || typeof src !== 'object') return null;
+  const m = new Map();
+  for (const [id, bb] of Object.entries(src)) {
+    if (id && bb && Number.isFinite(bb.minX) && Number.isFinite(bb.maxX)) {
+      m.set(id, bb);
+    }
+  }
+  return m.size > 0 ? m : null;
 }

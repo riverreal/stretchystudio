@@ -14,6 +14,7 @@ import {
 import {
   synthesizeDeformerNodesFromSidetables,
 } from '../../src/store/deformerNodeSync.js';
+import { evalProjectFrameViaDepgraph } from '../../src/anim/depgraph/evalProjectFrame.js';
 
 let passed = 0;
 let failed = 0;
@@ -777,6 +778,34 @@ import { _warpRestPositions } from '../../src/io/live2d/rig/selectRigSpec.js';
   assert(Math.abs(local[0] - 0.25) < 1e-6, `canvas-px-under-warp: vert 0 x normalised (got ${local[0]})`);
   assert(Math.abs(local[1] - 0.25) < 1e-6, `canvas-px-under-warp: vert 0 y normalised (got ${local[1]})`);
   assert(Math.abs(local[2] - 0.75) < 1e-6, `canvas-px-under-warp: vert 1 x normalised (got ${local[2]})`);
+  const restBb = spec.warpRestBboxes?.BodyXWarp;
+  assert(!!restBb && restBb.maxX - restBb.minX > 4,
+    'canvas-px-under-warp: warpRestBboxes.BodyXWarp is a canvas-px bbox');
+
+  const bboxOf = (frames) => {
+    const f = frames.find((x) => x.id === 'objects');
+    const v = f?.vertexPositions;
+    if (!v) return null;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (let i = 0; i < v.length; i += 2) {
+      if (v[i] < minX) minX = v[i]; if (v[i] > maxX) maxX = v[i];
+      if (v[i + 1] < minY) minY = v[i + 1]; if (v[i + 1] > maxY) maxY = v[i + 1];
+    }
+    return { minX, minY, maxX, maxY };
+  };
+  const nearAuthored = (bb, label) => {
+    assert(!!bb, `${label}: eval produced objects frame`);
+    const w = bb.maxX - bb.minX;
+    const h = bb.maxY - bb.minY;
+    assert(w < 800 && h < 600 && w > 50 && h > 50,
+      `${label}: bbox ${w.toFixed(0)}×${h.toFixed(0)} stays near authored (not Cubism far-field)`);
+    assert(Math.abs((bb.minX + bb.maxX) / 2 - 400) < 80,
+      `${label}: center x near authored 400 (got ${((bb.minX + bb.maxX) / 2).toFixed(1)})`);
+  };
+  nearAuthored(bboxOf(evalProjectFrameViaDepgraph(project, {}, { rigSpec: spec })),
+    'canvas-px-under-warp+rigSpec');
+  nearAuthored(bboxOf(evalProjectFrameViaDepgraph(project, {})),
+    'canvas-px-under-warp kernel-only (no rigSpec)');
 }
 
 // ── Summary ──────────────────────────────────────────────────────
