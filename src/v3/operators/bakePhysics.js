@@ -89,6 +89,7 @@ import { insertKeyformAtInAction, INSERTKEY_FLAGS } from '../../anim/insertKeyfr
 import { selectSparseKeyframesGrouped } from '../../anim/simplifyKeyframes.js';
 import { sanitisePartName } from '../../lib/partId.js';
 import { getBoneRole } from '../../store/objectDataAccess.js';
+import { applySpringCinematicToBakeRecords } from '../../io/live2d/rig/springChain.js';
 
 /**
  * @typedef {Object} BakePhysicsTuning
@@ -438,6 +439,9 @@ function rnaPathForBakedOutput(project, paramId) {
  * @property {number} [simplifyTolerance] - Absolute value error
  *   override for key reduction. When finite, wins over the relative
  *   tolerance.
+ * @property {boolean} [springCinematicWrap] - When true, cinematic
+ *   follow lookback wraps the bake range (idle loops). When omitted,
+ *   wrap if the action already has a Cycles modifier.
  */
 
 /**
@@ -474,6 +478,23 @@ function rnaPathForBakedOutput(project, paramId) {
  * @param {BakePhysicsOptions} [options]
  * @returns {BakePhysicsResult}
  */
+/**
+ * Idle stamps Cycles after bake, so this only sees modifiers on
+ * already-looping actions (re-bake). Idle generate passes
+ * `springCinematicWrap` explicitly.
+ *
+ * @param {object} action
+ */
+function isLikelyLoopingAction(action) {
+  for (const fc of action?.fcurves ?? []) {
+    for (const mod of fc?.modifiers ?? []) {
+      const t = typeof mod?.type === 'string' ? mod.type.toLowerCase() : '';
+      if (t === 'cycles' || t === 'fmodifier_cycles') return true;
+    }
+  }
+  return false;
+}
+
 export function bakePhysics(action, project, options = {}) {
   if (!action || typeof action !== 'object') {
     throw new Error('bakePhysics: action is required');
@@ -621,6 +642,12 @@ export function bakePhysics(action, project, options = {}) {
     }
     sampleCount++;
   }
+
+  // Cubism delay can't go cinematic without freezing. Extra follow
+  // lives on `project.springChains[].cinematic` and is applied here.
+  const wrapCinematic = options.springCinematicWrap === true
+    || (options.springCinematicWrap !== false && isLikelyLoopingAction(action));
+  applySpringCinematicToBakeRecords(records, project, stepMs, { wrap: wrapCinematic });
 
   // Sort by (rnaPath, time) so consumers can binary-search.
   records.sort((a, b) => (a.rnaPath < b.rnaPath ? -1 : a.rnaPath > b.rnaPath ? 1

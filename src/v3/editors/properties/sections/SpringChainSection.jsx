@@ -16,10 +16,13 @@ import { PropertyRow } from '../primitives/PropertyRow.jsx';
 import { NumberField } from '../fields/NumberField.jsx';
 import * as SelectImpl from '../../../../components/ui/select.jsx';
 import {
+  DEFAULT_CINEMATIC,
   DEFAULT_JOINTS,
   DEFAULT_LAG,
+  MAX_CINEMATIC,
   MAX_JOINTS,
   MAX_LAG,
+  MIN_CINEMATIC,
   MIN_JOINTS,
   MIN_LAG,
   SPRING_AXES,
@@ -29,8 +32,10 @@ import {
   canAddSpringChain,
   findSpringChain,
   normalizeSpringAxis,
+  normalizeSpringCinematic,
   normalizeSpringLag,
   removeSpringChain,
+  setSpringChainCinematic,
 } from '../../../../io/live2d/rig/springChain.js';
 import { getRigWarpNodes } from '../../../../io/live2d/rig/deformerNodeReaders.js';
 
@@ -49,6 +54,7 @@ export function SpringChainSection({ nodeId }) {
   const [jointCount, setJointCount] = useState(DEFAULT_JOINTS);
   const [axis, setAxis] = useState(SPRING_AXIS_AUTO);
   const [lag, setLag] = useState(DEFAULT_LAG);
+  const [cinematic, setCinematic] = useState(DEFAULT_CINEMATIC);
   const [message, setMessage] = useState(/** @type {string|null} */ (null));
 
   const chain = useMemo(
@@ -64,7 +70,8 @@ export function SpringChainSection({ nodeId }) {
     setAxis(normalizeSpringAxis(chain?.axis));
     if (chain?.jointCount) setJointCount(chain.jointCount);
     setLag(normalizeSpringLag(chain?.lag));
-  }, [nodeId, chain?.axis, chain?.jointCount, chain?.lag]);
+    setCinematic(normalizeSpringCinematic(chain?.cinematic));
+  }, [nodeId, chain?.axis, chain?.jointCount, chain?.lag, chain?.cinematic]);
 
   function apply(fn) {
     setMessage(null);
@@ -83,7 +90,7 @@ export function SpringChainSection({ nodeId }) {
     }
   }
 
-  function rebuild(nextAxis, nextJoints, nextLag) {
+  function rebuild(nextAxis, nextJoints, nextLag, nextCinematic) {
     apply((proj) => {
       const removed = removeSpringChain(proj, nodeId);
       if (!removed.ok) return removed;
@@ -91,6 +98,7 @@ export function SpringChainSection({ nodeId }) {
         jointCount: nextJoints ?? jointCount,
         axis: nextAxis ?? axis,
         lag: nextLag ?? lag,
+        cinematic: nextCinematic ?? cinematic,
       });
     });
   }
@@ -140,7 +148,21 @@ export function SpringChainSection({ nodeId }) {
             onCommit={(v) => {
               const next = normalizeSpringLag(v);
               setLag(next);
-              rebuild(axis, jointCount, next);
+              rebuild(axis, jointCount, next, cinematic);
+            }}
+          />
+          <NumberField
+            label="Cinematic"
+            title="Extra follow delay on idle bake. 0 is physics-only; 1 is ~0.8s tip lag; 2 is ~1.6s. Does not rebuild the pendulum."
+            value={cinematic}
+            min={MIN_CINEMATIC}
+            max={MAX_CINEMATIC}
+            step={0.05}
+            precision={2}
+            onCommit={(v) => {
+              const next = normalizeSpringCinematic(v);
+              setCinematic(next);
+              apply((proj) => setSpringChainCinematic(proj, nodeId, next));
             }}
           />
           <PropertyRow label="Params" alignTop>
@@ -150,13 +172,13 @@ export function SpringChainSection({ nodeId }) {
           </PropertyRow>
           <p className="px-2 pb-1 text-[10px] text-muted-foreground leading-snug">
             Idle generation keys ParamWind. The first joints stay quiet; the
-            tip carries the wave. Bake is automatic when you generate a motion.
+            tip carries the wave. Cinematic adds follow delay on bake.
           </p>
           <div className="flex gap-1 px-2 pb-2">
             <button
               type="button"
               className="h-6 px-2 text-[11px] rounded border border-border bg-background hover:bg-muted"
-              onClick={() => rebuild(axis, jointCount, lag)}
+              onClick={() => rebuild(axis, jointCount, lag, cinematic)}
             >
               Rebuild ({jointCount})
             </button>
@@ -208,13 +230,24 @@ export function SpringChainSection({ nodeId }) {
             disabled={!gate.ok}
             onCommit={(v) => setLag(normalizeSpringLag(v))}
           />
+          <NumberField
+            label="Cinematic"
+            title="Extra follow delay on idle bake. 0 is physics-only; 1 is ~0.8s tip lag; 2 is ~1.6s."
+            value={cinematic}
+            min={MIN_CINEMATIC}
+            max={MAX_CINEMATIC}
+            step={0.05}
+            precision={2}
+            disabled={!gate.ok}
+            onCommit={(v) => setCinematic(normalizeSpringCinematic(v))}
+          />
           <div className="px-2 pb-2">
             <button
               type="button"
               className="h-6 px-2 text-[11px] rounded border border-border bg-background hover:bg-muted disabled:opacity-50"
               disabled={!gate.ok}
               title={gate.ok ? 'Add a spring chain to this part' : gate.reason}
-              onClick={() => apply((proj) => addSpringChain(proj, nodeId, { jointCount, axis, lag }))}
+              onClick={() => apply((proj) => addSpringChain(proj, nodeId, { jointCount, axis, lag, cinematic }))}
             >
               Add spring chain
             </button>

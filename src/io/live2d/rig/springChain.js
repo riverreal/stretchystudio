@@ -41,6 +41,15 @@ export const DEFAULT_JOINTS = 3;
 export const MIN_LAG = 0;
 export const MAX_LAG = 1;
 export const DEFAULT_LAG = 0.85;
+/**
+ * Extra follow delay on bake / idle generate (not Cubism `delay` —
+ * that term freezes the integrator if crushed). 0 = physics only;
+ * 1 = tip lags ~0.8 s; 2 = ~1.6 s.
+ */
+export const MIN_CINEMATIC = 0;
+export const MAX_CINEMATIC = 2;
+export const DEFAULT_CINEMATIC = 0.85;
+export const CINEMATIC_TIP_DELAY_SEC = 0.80;
 
 /** @typedef {'auto'|'topDown'|'downTop'|'leftRight'|'rightLeft'} SpringAxis */
 
@@ -81,6 +90,7 @@ const SWAY_PARAM_IDS = new Set([
  * @property {number} jointCount
  * @property {SpringAxis} [axis]
  * @property {number} [lag]
+ * @property {number} [cinematic]
  * @property {string[]} paramIds
  * @property {string} physicsRuleId
  * @property {string} [replacedParamId]
@@ -178,6 +188,127 @@ export function springBandWeight(frac, j, n) {
 export function normalizeSpringLag(lag) {
   if (!Number.isFinite(lag)) return DEFAULT_LAG;
   return Math.max(MIN_LAG, Math.min(MAX_LAG, Number(lag)));
+}
+
+/**
+ * @param {unknown} cinematic
+ * @returns {number}
+ */
+export function normalizeSpringCinematic(cinematic) {
+  if (!Number.isFinite(cinematic)) return DEFAULT_CINEMATIC;
+  return Math.max(MIN_CINEMATIC, Math.min(MAX_CINEMATIC, Number(cinematic)));
+}
+
+/**
+ * Extra follow delay for joint `j` of `n`. Root stays at 0; tip gets
+ * `cinematic * CINEMATIC_TIP_DELAY_SEC`.
+ *
+ * @param {number} j
+ * @param {number} n
+ * @param {unknown} cinematic
+ */
+export function springCinematicDelaySec(j, n, cinematic) {
+  const c = normalizeSpringCinematic(cinematic);
+  if (!(c > 0) || n <= 1 || j <= 0) return 0;
+  const t = Math.max(0, Math.min(1, j / (n - 1)));
+  return c * CINEMATIC_TIP_DELAY_SEC * t * t;
+}
+
+/**
+ * Time-shift + ease a physics sample series. Cubism can't do this
+ * (force ∝ delay²), so bake applies it after the pendulum tick.
+ *
+ * @param {number[]} values
+ * @param {number} delaySec
+ * @param {number} dtSec
+ * @param {{ wrap?: boolean }} [opts]
+ * @returns {number[]}
+ */
+export function applyCinematicFollow(values, delaySec, dtSec, opts = {}) {
+  if (!Array.isArray(values) || values.length === 0) return [];
+  if (!(delaySec > 0) || !(dtSec > 0)) return values.slice();
+  const n = values.length;
+  const lookback = Math.max(0, Math.round(delaySec / dtSec));
+  if (lookback === 0) return values.slice();
+  const wrap = opts.wrap === true;
+  const tau = delaySec * 0.4;
+  const alpha = tau <= 1e-6 ? 1 : 1 - Math.exp(-dtSec / tau);
+  const srcAt = (i) => {
+    if (wrap) return values[((i - lookback) % n + n) % n];
+    return values[Math.max(0, i - lookback)];
+  };
+  let smooth = srcAt(0);
+  if (wrap) {
+    for (let i = 0; i < n; i++) smooth += (srcAt(i) - smooth) * alpha;
+  }
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const src = srcAt(i);
+    smooth += (src - smooth) * alpha;
+    out[i] = smooth;
+  }
+  return out;
+}
+
+/**
+ * Post-process bake records: delay later spring joints. Hair / skirt
+ * outputs are left as the pendulum wrote them.
+ *
+ * @param {Array<{rnaPath: string, time: number, value: number}>} records
+ * @param {object|null|undefined} project
+ * @param {number} stepMs
+ * @param {{ wrap?: boolean }} [opts]
+ * @returns {typeof records}
+ */
+export function applySpringCinematicToBakeRecords(records, project, stepMs, opts = {}) {
+  if (!Array.isArray(records) || records.length === 0) return records;
+  if (!(stepMs > 0)) return records;
+  const chains = project?.springChains;
+  if (!Array.isArray(chains) || chains.length === 0) return records;
+
+  /** @type {Map<string, number>} */
+  const delayByParam = new Map();
+  for (const chain of chains) {
+    const ids = chain?.paramIds;
+    if (!Array.isArray(ids) || ids.length === 0) continue;
+    const c = normalizeSpringCinematic(chain.cinematic);
+    if (!(c > 0)) continue;
+    for (let i = 0; i < ids.length; i++) {
+      const d = springCinematicDelaySec(i, ids.length, c);
+      if (d > 0 && typeof ids[i] === 'string') delayByParam.set(ids[i], d);
+    }
+  }
+  if (delayByParam.size === 0) return records;
+
+  /** @type {Map<string, typeof records>} */
+  const byPath = new Map();
+  for (const rec of records) {
+    const path = rec?.rnaPath;
+    if (typeof path !== 'string') continue;
+    let list = byPath.get(path);
+    if (!list) {
+      list = [];
+      byPath.set(path, list);
+    }
+    list.push(rec);
+  }
+
+  const dtSec = stepMs / 1000;
+  for (const [path, list] of byPath) {
+    const m = path.match(/values\["([^"]+)"\]$/);
+    const paramId = m ? m[1] : null;
+    const delaySec = paramId ? delayByParam.get(paramId) : undefined;
+    if (!(delaySec > 0)) continue;
+    list.sort((a, b) => a.time - b.time);
+    const followed = applyCinematicFollow(
+      list.map((r) => r.value),
+      delaySec,
+      dtSec,
+      opts,
+    );
+    for (let i = 0; i < list.length; i++) list[i].value = followed[i];
+  }
+  return records;
 }
 
 /** @param {number} a @param {number} b @param {number} t */
@@ -647,7 +778,7 @@ function ensureJointParam(project, partId, index) {
  *
  * @param {object} project
  * @param {string} partId
- * @param {{ jointCount?: number, axis?: SpringAxis, lag?: number }} [opts]
+ * @param {{ jointCount?: number, axis?: SpringAxis, lag?: number, cinematic?: number }} [opts]
  * @returns {SpringChainResult}
  */
 export function addSpringChain(project, partId, opts = {}) {
@@ -659,6 +790,7 @@ export function addSpringChain(project, partId, opts = {}) {
   if (jointCount > MAX_JOINTS) jointCount = MAX_JOINTS;
   const axis = normalizeSpringAxis(opts.axis);
   const lag = normalizeSpringLag(opts.lag);
+  const cinematic = normalizeSpringCinematic(opts.cinematic);
 
   if (findSpringChain(project, partId)) {
     const removed = removeSpringChain(project, partId);
@@ -694,6 +826,7 @@ export function addSpringChain(project, partId, opts = {}) {
     jointCount,
     axis,
     lag,
+    cinematic,
     paramIds: paramIds.slice(),
     physicsRuleId: rule.id,
     replacedParamId: replaced[0],
@@ -760,6 +893,7 @@ export function reseedSpringChains(project) {
     jointCount: c.jointCount,
     axis: c.axis,
     lag: c.lag,
+    cinematic: c.cinematic,
   }));
   project.springChains = [];
   let applied = 0;
@@ -769,8 +903,24 @@ export function reseedSpringChains(project) {
       jointCount: rec.jointCount,
       axis: rec.axis,
       lag: rec.lag,
+      cinematic: rec.cinematic,
     });
     if (result.ok) applied += 1;
   }
   return applied;
+}
+
+/**
+ * Store cinematic follow without rebuilding warp / pendulum.
+ *
+ * @param {object} project
+ * @param {string} partId
+ * @param {number} cinematic
+ * @returns {SpringChainResult}
+ */
+export function setSpringChainCinematic(project, partId, cinematic) {
+  const chain = findSpringChain(project, partId);
+  if (!chain) return { ok: false, reason: 'No spring chain on this part.' };
+  chain.cinematic = normalizeSpringCinematic(cinematic);
+  return { ok: true, chain, warnings: [] };
 }

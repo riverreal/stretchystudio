@@ -8,11 +8,15 @@ import {
   addSpringChain,
   buildSpringChainPhysicsRule,
   canAddSpringChain,
+  DEFAULT_CINEMATIC,
   DEFAULT_LAG,
+  applyCinematicFollow,
   cartesianKeyTuples,
   findSpringChain,
   removeSpringChain,
   reseedSpringChains,
+  setSpringChainCinematic,
+  springCinematicDelaySec,
   resolveSpringAxis,
   resolveWarpGridDims,
   springBandWeight,
@@ -215,6 +219,7 @@ expect('addSpringChain writes params, warp bands, physics, and the record', () =
   assert.equal(warp._userAuthored, true);
   assert.equal(result.chain.axis, 'auto');
   assert.equal(result.chain.lag, DEFAULT_LAG);
+  assert.equal(result.chain.cinematic, DEFAULT_CINEMATIC);
   for (const kf of warp.keyforms) {
     assert.ok(Array.isArray(kf.positions), 'keyform positions must be a plain Array (KEYFORM_EVAL skips TypedArrays)');
   }
@@ -284,7 +289,7 @@ expect('removeSpringChain restores the tag warp and default physics', () => {
 
 expect('reseedSpringChains rebuilds after a wipe', () => {
   const project = makeHairProject();
-  addSpringChain(project, 'part_hair', { jointCount: 2, axis: 'topDown', lag: 1 });
+  addSpringChain(project, 'part_hair', { jointCount: 2, axis: 'topDown', lag: 1, cinematic: 1.5 });
   project.nodes[0].modifiers = project.nodes[0].modifiers.filter((m) => m.type !== 'physicsModifier');
   const n = reseedSpringChains(project);
   assert.equal(n, 1);
@@ -293,6 +298,32 @@ expect('reseedSpringChains rebuilds after a wipe', () => {
   assert.equal(findSpringChain(project, 'part_hair')?.jointCount, 2);
   assert.equal(findSpringChain(project, 'part_hair')?.axis, 'topDown');
   assert.equal(findSpringChain(project, 'part_hair')?.lag, 1);
+  assert.equal(findSpringChain(project, 'part_hair')?.cinematic, 1.5);
+});
+
+expect('springCinematicDelaySec keeps the root at 0 and lags the tip', () => {
+  assert.equal(springCinematicDelaySec(0, 3, 1), 0);
+  assert.ok(springCinematicDelaySec(2, 3, 1) > springCinematicDelaySec(1, 3, 1));
+  assert.ok(springCinematicDelaySec(2, 3, 2) > springCinematicDelaySec(2, 3, 1));
+  assert.equal(springCinematicDelaySec(2, 3, 0), 0);
+});
+
+expect('applyCinematicFollow delays a step without crushing amplitude', () => {
+  const dt = 1 / 30;
+  const values = [];
+  for (let i = 0; i < 60; i++) values.push(i < 10 ? 0 : 1);
+  const followed = applyCinematicFollow(values, 0.4, dt, { wrap: false });
+  assert.ok(followed[10] < 0.35, `just after step should still be easing, got ${followed[10]}`);
+  assert.ok(followed[40] > 0.85, `later samples should catch the step, got ${followed[40]}`);
+});
+
+expect('setSpringChainCinematic patches without dropping the chain', () => {
+  const project = makeHairProject();
+  addSpringChain(project, 'part_hair', { jointCount: 2 });
+  const patched = setSpringChainCinematic(project, 'part_hair', 2);
+  assert.equal(patched.ok, true);
+  assert.equal(findSpringChain(project, 'part_hair')?.cinematic, 2);
+  assert.equal(findSpringChain(project, 'part_hair')?.jointCount, 2);
 });
 
 expect('idle gen keys ParamWind and skips spring outputs', () => {

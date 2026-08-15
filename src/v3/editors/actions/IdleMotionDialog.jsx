@@ -207,7 +207,10 @@ export function IdleMotionDialog({ open, onOpenChange }) {
         );
         const next = { ...s.project, actions };
         if (gatherPhysicsRules(next).length > 0) {
-          applyBakePhysics(next, created.id, getLastBakePhysicsTuning());
+          applyBakePhysics(next, created.id, {
+            ...getLastBakePhysicsTuning(),
+            springCinematicWrap: isLoopPreset,
+          });
           if (isLoopPreset) {
             const baked = next.actions.find((a) => a.id === created.id);
             for (const fc of baked?.fcurves ?? []) {
