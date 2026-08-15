@@ -111,6 +111,7 @@ import { migrateRigParentStrip } from './migrations/v48_rig_parent_strip.js';
 import { migrateVariantVisibleToOpacity } from './migrations/v49_variant_visible_to_opacity.js';
 import { migratePhysicsModifierPerNode } from './migrations/v50_physics_modifier_per_node.js';
 import { migrateDecimalPlacesThree } from './migrations/v51_decimal_places_three.js';
+import { migrateSpringChains } from './migrations/v52_spring_chains.js';
 import { logger } from '../lib/logger.js';
 
 // CURRENT_SCHEMA_VERSION re-exported above from `./projectSchemaVersion.js`
@@ -911,6 +912,14 @@ const MIGRATIONS = {
   // 2026-06-09 round-8 breath snap debug entry.
   51: (project) => {
     migrateDecimalPlacesThree(project);
+    return project;
+  },
+
+  // v52 — persist `project.springChains[]` (manual spring-chain
+  // authoring: N warp-band params + physics on one part). Older
+  // saves have no field; seed an empty array so save/load is stable.
+  52: (project) => {
+    migrateSpringChains(project);
     return project;
   },
 

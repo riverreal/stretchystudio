@@ -57,6 +57,17 @@ for (const preset of PRESET_NAMES) {
   });
 }
 
+expect('ParamWind is animated when present and not a physics output', () => {
+  const result = buildMotion3({
+    preset: 'idle',
+    paramIds: [...STANDARD_PARAMS, 'ParamWind'],
+    physicsOutputIds: PHYSICS_OUTPUTS,
+    durationSec: 8, fps: 30, personality: 'calm', seed: 1,
+  });
+  assert.ok(result.animatedIds.includes('ParamWind'), 'ParamWind should be generated');
+  assert.ok(!PHYSICS_OUTPUTS.has('ParamWind'));
+});
+
 expect('physics outputs are skipped', () => {
   const result = buildMotion3({
     preset: 'idle',

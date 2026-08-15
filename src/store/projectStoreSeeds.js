@@ -49,6 +49,7 @@ let _seedsPromise = null;
  * @property {(p: any) => void} clearBodyWarp
  * @property {(p: any, warps: any, mode?: string) => void} seedRigWarps
  * @property {(p: any) => void} clearRigWarps
+ * @property {(p: any) => number} reseedSpringChains
  */
 
 /**
@@ -74,12 +75,14 @@ export function loadSeedModule() {
       import('../io/live2d/rig/faceParallaxStore.js'),
       import('../io/live2d/rig/bodyWarpStore.js'),
       import('../io/live2d/rig/rigWarpsStore.js'),
+      import('../io/live2d/rig/springChain.js'),
     ]).then(([
       paramSpec, maskConfigs, physicsConfig, boneConfig,
       variantFadeRules, eyeClosureConfig, rotationDeformerConfig,
       autoRigConfig, faceParallaxStore, bodyWarpStore, rigWarpsStore,
+      springChain,
     ]) => {
-      logger.timeEnd('lazyLoad', 'seeds:11modules', { count: 11 });
+      logger.timeEnd('lazyLoad', 'seeds:11modules', { count: 12 });
       return {
         seedParameters: paramSpec.seedParameters,
         seedMaskConfigs: maskConfigs.seedMaskConfigs,
@@ -95,6 +98,7 @@ export function loadSeedModule() {
         clearBodyWarp: bodyWarpStore.clearBodyWarp,
         seedRigWarps: rigWarpsStore.seedRigWarps,
         clearRigWarps: rigWarpsStore.clearRigWarps,
+        reseedSpringChains: springChain.reseedSpringChains,
       };
     }).catch((err) => {
       // On import failure, also end the timer so we don't leak the registry

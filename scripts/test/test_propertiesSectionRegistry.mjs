@@ -27,6 +27,14 @@ const SECTIONS = [
     isVisible: ({ active }) => active.type === 'part',
   },
   {
+    id: 'springChain',
+    isVisible: ({ active, project }) => {
+      if (active.type !== 'part') return false;
+      if ((project?.springChains ?? []).some((c) => c?.partId === active.id)) return true;
+      return (project?.nodes ?? []).some((n) => n?.targetPartId === active.id);
+    },
+  },
+  {
     id: 'modifierStack',
     isVisible: ({ active, project }) => {
       if (active.type !== 'part') return false;
@@ -196,6 +204,20 @@ function ids(ctx) {
 }
 
 // ── V2 Phase D-5: modifierStack section visibility ───────────────────
+
+{
+  const got = ids({
+    active: { type: 'part', id: 'p1' },
+    project: {
+      nodes: [
+        { id: 'p1', type: 'part', mesh: { vertices: [0, 0, 1, 0, 0, 1] } },
+        { id: 'w1', type: 'deformer', deformerKind: 'warp', targetPartId: 'p1' },
+      ],
+    },
+  });
+  assert(got.includes('springChain'),
+    'springChain: visible when the part has a rig warp');
+}
 
 {
   // Empty modifiers[] → modifierStack hidden.

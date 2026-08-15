@@ -371,6 +371,7 @@ export const useProjectStore = create((set, get) => {
     meshSignatures: {},
     lastInitRigCompletedAt: null,
     rigStageLastRunAt: {},
+    springChains: [],
   },
 
   // Versions used to trigger rendering passes independently of React
@@ -1900,6 +1901,11 @@ export const useProjectStore = create((set, get) => {
       // replace mode and re-attaches one per resolved output to its
       // owner node.
       seeds.seedPhysicsModifiers(proj, mode);
+      // Spring chains are user-authored warp-band + physics overlays.
+      // Init Rig replace wipes default physics and regenerates warps;
+      // re-apply stored chains so joint params / keyforms / modifiers
+      // match the post-seed lattice.
+      seeds.reseedSpringChains(proj);
       // V2 Phase 0.3 — modifier stacks are now canonical; the
       // export-facing `deformer.parent` chain links are a derived
       // mirror for cmo3writer (the `part.rigParent` mirror was retired

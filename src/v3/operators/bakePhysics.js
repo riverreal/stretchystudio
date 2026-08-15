@@ -191,6 +191,14 @@ export function bakeTargetLabel(paramId, ruleName) {
   if (KNOWN_OUTPUT_LABELS[paramId]) return KNOWN_OUTPUT_LABELS[paramId];
   const rot = typeof paramId === 'string' ? paramId.match(/^ParamRotation_(.+)$/) : null;
   if (rot) return rot[1];
+  if (typeof paramId === 'string' && paramId.startsWith('ParamSpring_')) {
+    const tail = paramId.slice('ParamSpring_'.length);
+    const idx = tail.lastIndexOf('_');
+    const n = idx >= 0 ? tail.slice(idx + 1) : '';
+    const joint = Number(n);
+    if (Number.isFinite(joint)) return `Spring ${joint + 1}`;
+    return 'Spring';
+  }
   return ruleName || paramId;
 }
 

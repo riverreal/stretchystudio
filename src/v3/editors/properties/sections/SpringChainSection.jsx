@@ -1,0 +1,160 @@
+// @ts-check
+
+/**
+ * Spring Chain section — add / remove a multi-joint warp-band chain
+ * on the selected part. Visible when the part has a rig warp or an
+ * existing chain.
+ *
+ * @module v3/editors/properties/sections/SpringChainSection
+ */
+
+import { useMemo, useState } from 'react';
+import { Wind } from 'lucide-react';
+import { useProjectStore } from '../../../../store/projectStore.js';
+import { SectionShell } from './SectionShell.jsx';
+import { PropertyRow } from '../primitives/PropertyRow.jsx';
+import { NumberField } from '../fields/NumberField.jsx';
+import {
+  DEFAULT_JOINTS,
+  MAX_JOINTS,
+  MIN_JOINTS,
+  addSpringChain,
+  canAddSpringChain,
+  findSpringChain,
+  removeSpringChain,
+} from '../../../../io/live2d/rig/springChain.js';
+import { getRigWarpNodes } from '../../../../io/live2d/rig/deformerNodeReaders.js';
+
+/**
+ * @param {Object} props
+ * @param {string} props.nodeId
+ */
+export function SpringChainSection({ nodeId }) {
+  const nodes = useProjectStore((s) => s.project.nodes);
+  const springChains = useProjectStore((s) => s.project.springChains);
+  const updateProject = useProjectStore((s) => s.updateProject);
+  const [jointCount, setJointCount] = useState(DEFAULT_JOINTS);
+  const [message, setMessage] = useState(/** @type {string|null} */ (null));
+
+  const chain = useMemo(
+    () => findSpringChain({ springChains }, nodeId),
+    [springChains, nodeId],
+  );
+  const gate = useMemo(() => {
+    const project = useProjectStore.getState().project;
+    return canAddSpringChain(project, nodeId);
+  }, [nodes, nodeId, springChains]);
+
+  function apply(fn) {
+    setMessage(null);
+    let result = /** @type {{ ok: boolean, reason?: string, warnings?: string[] }|null} */ (null);
+    updateProject((proj, vc) => {
+      result = fn(proj);
+      if (result?.ok && vc) vc.geometryVersion = (vc.geometryVersion ?? 0) + 1;
+    });
+    if (!result) return;
+    if (!result.ok) {
+      setMessage(result.reason ?? 'Failed.');
+      return;
+    }
+    if (result.warnings && result.warnings.length > 0) {
+      setMessage(result.warnings.join(' '));
+    }
+  }
+
+  return (
+    <SectionShell id="springChain" label="Spring Chain" icon={<Wind size={11} />}>
+      {chain ? (
+        <>
+          <PropertyRow label="Joints">
+            <span className="text-[11px] text-foreground tabular-nums">
+              {chain.jointCount}
+            </span>
+          </PropertyRow>
+          <PropertyRow label="Params" alignTop>
+            <span className="text-[10px] text-muted-foreground font-mono break-all">
+              {(chain.paramIds ?? []).join(', ')}
+            </span>
+          </PropertyRow>
+          <p className="px-2 pb-1 text-[10px] text-muted-foreground leading-snug">
+            Idle generation keys ParamWind; physics lags each joint down the
+            mesh. Bake is automatic when you generate a motion.
+          </p>
+          <div className="flex gap-1 px-2 pb-2">
+            <button
+              type="button"
+              className="h-6 px-2 text-[11px] rounded border border-border bg-background hover:bg-muted"
+              onClick={() => apply((proj) => {
+                const removed = removeSpringChain(proj, nodeId);
+                if (!removed.ok) return removed;
+                return addSpringChain(proj, nodeId, { jointCount });
+              })}
+            >
+              Rebuild ({jointCount})
+            </button>
+            <button
+              type="button"
+              className="h-6 px-2 text-[11px] rounded border border-destructive/40 text-destructive hover:bg-destructive/10"
+              onClick={() => apply((proj) => removeSpringChain(proj, nodeId))}
+            >
+              Remove
+            </button>
+          </div>
+          <NumberField
+            label="Rebuild joints"
+            value={jointCount}
+            min={MIN_JOINTS}
+            max={MAX_JOINTS}
+            step={1}
+            precision={0}
+            onCommit={(v) => setJointCount(Math.max(MIN_JOINTS, Math.min(MAX_JOINTS, Math.round(v))))}
+          />
+        </>
+      ) : (
+        <>
+          <p className="px-2 pb-1 text-[10px] text-muted-foreground leading-snug">
+            Attach 2–4 spring joints to this part. They deform the existing
+            warp (one mesh, traveling wave) and simulate during idle generation.
+          </p>
+          <NumberField
+            label="Joints"
+            value={jointCount}
+            min={MIN_JOINTS}
+            max={MAX_JOINTS}
+            step={1}
+            precision={0}
+            disabled={!gate.ok}
+            onCommit={(v) => setJointCount(Math.max(MIN_JOINTS, Math.min(MAX_JOINTS, Math.round(v))))}
+          />
+          <div className="px-2 pb-2">
+            <button
+              type="button"
+              className="h-6 px-2 text-[11px] rounded border border-border bg-background hover:bg-muted disabled:opacity-50"
+              disabled={!gate.ok}
+              title={gate.ok ? 'Add a spring chain to this part' : gate.reason}
+              onClick={() => apply((proj) => addSpringChain(proj, nodeId, { jointCount }))}
+            >
+              Add spring chain
+            </button>
+          </div>
+          {!gate.ok ? (
+            <p className="px-2 pb-2 text-[10px] text-muted-foreground">{gate.reason}</p>
+          ) : null}
+        </>
+      )}
+      {message ? (
+        <p className="px-2 pb-2 text-[10px] text-amber-600 dark:text-amber-400">{message}</p>
+      ) : null}
+    </SectionShell>
+  );
+}
+
+/**
+ * @param {{ type: string, id: string }} active
+ * @param {object} project
+ */
+export function isSpringChainSectionVisible(active, project) {
+  if (active?.type !== 'part') return false;
+  if (findSpringChain(project, active.id)) return true;
+  return getRigWarpNodes(project).has(active.id);
+}

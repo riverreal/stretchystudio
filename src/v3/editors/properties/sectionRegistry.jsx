@@ -21,7 +21,7 @@
  * Order in the array is the canonical top-to-bottom order, locked in
  * V4_BLENDER_PARITY_PLAN §3:
  *
- *   Transform · Visibility · Part Info · Mesh · Shape Keys ·
+ *   Transform · Visibility · Part Info · Spring Chain · Mesh · Shape Keys ·
  *   Mask · Variant · Bone · Physics · Deformer · Bindings · Keyforms ·
  *   Parameter · Rig Stages
  *
@@ -35,6 +35,7 @@
 import { TransformSection } from './sections/TransformSection.jsx';
 import { VisibilitySection } from './sections/VisibilitySection.jsx';
 import { PartInfoSection } from './sections/PartInfoSection.jsx';
+import { SpringChainSection, isSpringChainSectionVisible } from './sections/SpringChainSection.jsx';
 import { ModifierStackSection } from './sections/ModifierStackSection.jsx';
 import { BoneSection } from './sections/BoneSection.jsx';
 import { DeformerInfoSection } from './sections/DeformerInfoSection.jsx';
@@ -84,6 +85,12 @@ export const PROPERTIES_SECTIONS = [
     label: 'Part Info',
     isVisible: ({ active }) => active.type === 'part',
     render: ({ active }) => <PartInfoSection nodeId={active.id} />,
+  },
+  {
+    id: 'springChain',
+    label: 'Spring Chain',
+    isVisible: ({ active, project }) => isSpringChainSectionVisible(active, project),
+    render: ({ active }) => <SpringChainSection nodeId={active.id} />,
   },
   {
     id: 'modifierStack',

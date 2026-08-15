@@ -33,6 +33,8 @@ import { buildMotion3, PRESETS, PRESET_NAMES, PERSONALITY_PRESETS, makeLoopingCy
 import { buildParamFCurve } from '../../../anim/animationFCurve.js';
 import { sanitizeName } from '../../../io/live2d/exporter.js';
 import { uniqueName } from '../../../lib/uniqueName.js';
+import { applyBakePhysics } from '../../operators/bakePhysics.js';
+import { gatherPhysicsRules } from '../../../io/live2d/rig/physicsConfig.js';
 
 // shadcn/ui forwardRef components ship without JSX-typed declarations — cast
 // via `any` so tsc accepts children/className. Same pattern as ActionsEditor's
@@ -192,20 +194,31 @@ export function IdleMotionDialog({ open, onOpenChange }) {
       const created = (projectAfter.actions ?? []).find((a) => !beforeIds.has(a.id));
       if (!created) throw new Error('createAction did not produce a new entry');
 
-      // Patch fcurves + duration directly via produce-style update.
-      useProjectStore.setState((s) => ({
-        ...s,
-        project: {
-          ...s.project,
-          actions: s.project.actions.map((a) =>
-            a.id === created.id
-              ? { ...a, fcurves, duration: durationSec * 1000, fps }
-              : a
-          ),
-          // Don't bump hasUnsavedChanges separately — createAction
-          // already did, and the patch is part of the same logical action.
-        },
-      }));
+      // Patch fcurves + duration, then bake physics so spring-chain /
+      // hair / clothing outputs become keyframes (exportable without a
+      // live tick). Loop presets stamp Cycles on every baked curve so
+      // motion3 Meta.Loop stays true.
+      const isLoopPreset = (PRESETS[preset]?.cycleType ?? 'loop') === 'loop';
+      useProjectStore.setState((s) => {
+        const actions = s.project.actions.map((a) =>
+          a.id === created.id
+            ? { ...a, fcurves, duration: durationSec * 1000, fps }
+            : a
+        );
+        const next = { ...s.project, actions };
+        if (gatherPhysicsRules(next).length > 0) {
+          applyBakePhysics(next, created.id, {});
+          if (isLoopPreset) {
+            const baked = next.actions.find((a) => a.id === created.id);
+            for (const fc of baked?.fcurves ?? []) {
+              if (!Array.isArray(fc.modifiers) || fc.modifiers.length === 0) {
+                fc.modifiers = [makeLoopingCyclesModifier()];
+              }
+            }
+          }
+        }
+        return { ...s, project: next };
+      });
 
       // Switch to the new action + route to Animation workspace.
       // (BFA-001: editorMode is derived from activeWorkspace; setWorkspace
@@ -231,8 +244,9 @@ export function IdleMotionDialog({ open, onOpenChange }) {
             Generate idle motion
           </DialogTitle>
           <DialogDescription>
-            Synthesises a procedural Live2D motion (head wander, breath, blinks…) and
-            adds it as a new action.
+            Synthesises a procedural Live2D motion (head wander, breath, blinks, wind)
+            and adds it as a new action. Physics outputs (hair, clothing, spring chains)
+            are baked onto the action when rules exist.
           </DialogDescription>
         </DialogHeader>
 

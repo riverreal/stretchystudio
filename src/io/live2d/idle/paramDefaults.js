@@ -37,6 +37,7 @@ const RANGES = {
   ParamMouthOpenY:  { defaultMin: 0,   defaultMax: 1,  defaultRest: 0 },
   ParamMouthForm:   { defaultMin: -1,  defaultMax: 1,  defaultRest: 0 },
   ParamCheek:       { defaultMin: 0,   defaultMax: 1,  defaultRest: 0 },
+  ParamWind:        { defaultMin: -1,  defaultMax: 1,  defaultRest: 0 },
 };
 
 const r = (id) => RANGES[id];
@@ -273,6 +274,13 @@ export const LOOK_SET = Object.freeze([
   'lookDownLeft', 'lookDownRight',
   'tiltLeft', 'tiltRight',
 ]);
+
+const WIND_LOOP = { ...r('ParamWind'), kind: 'wander', cfg: { amplitude: 0.55, harmonics: 2, mid: 0, samples: 18 } };
+const WIND_HOLD = { ...r('ParamWind'), kind: 'sine',   cfg: { amplitude: 0.28, period: 4500, phase: 0 } };
+for (const entry of Object.values(PRESETS)) {
+  if (!entry?.params || entry.params.ParamWind) continue;
+  entry.params.ParamWind = (entry.cycleType === 'hold') ? WIND_HOLD : WIND_LOOP;
+}
 
 export const PRESET_NAMES = Object.freeze(Object.keys(PRESETS));
 
