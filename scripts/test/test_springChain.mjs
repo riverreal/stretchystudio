@@ -12,6 +12,7 @@ import {
   findSpringChain,
   removeSpringChain,
   reseedSpringChains,
+  resolveSpringAxis,
   resolveWarpGridDims,
   springBandWeight,
   springChainRuleId,
@@ -109,9 +110,7 @@ expect('springChainShift is identity at rest keys', () => {
   assert.deepEqual(Array.from(out), Array.from(grid));
 });
 
-expect('springChainShift moves the tip more than the root', () => {
-  const gW = 2;
-  const gH = 4;
+function makeGrid(gW, gH) {
   const grid = new Float64Array(gW * gH * 2);
   for (let r = 0; r < gH; r++) {
     for (let c = 0; c < gW; c++) {
@@ -119,12 +118,51 @@ expect('springChainShift moves the tip more than the root', () => {
       grid[(r * gW + c) * 2 + 1] = r;
     }
   }
+  return grid;
+}
+
+expect('springChainShift moves the tip more than the root', () => {
+  const gW = 2;
+  const gH = 4;
+  const grid = makeGrid(gW, gH);
   const out = springChainShift(grid, gW, gH, [0, 0, 1], 2, 4, { xSway: 0.2, yCurl: 0.05 });
   const rootDx = Math.abs(out[0] - grid[0]);
   const tipIdx = ((gH - 1) * gW) * 2;
   const tipDx = Math.abs(out[tipIdx] - grid[tipIdx]);
   assert.ok(rootDx < 1e-9, `root should stay pinned, dx=${rootDx}`);
   assert.ok(tipDx > 0.01, `tip should move, dx=${tipDx}`);
+});
+
+expect('resolveSpringAxis Auto follows the long bbox side', () => {
+  assert.equal(resolveSpringAxis('auto', 2, 8), 'topDown');
+  assert.equal(resolveSpringAxis('auto', 8, 2), 'leftRight');
+  assert.equal(resolveSpringAxis('downTop', 8, 2), 'downTop');
+});
+
+expect('springChainShift axis override pins the chosen edge', () => {
+  const gW = 4;
+  const gH = 3;
+  const grid = makeGrid(gW, gH);
+  const mag = { xSway: 0.2, yCurl: 0.05, axis: 'leftRight' };
+  const out = springChainShift(grid, gW, gH, [0, 0, 1], 6, 2, mag);
+  const leftIdx = 0;
+  const rightIdx = (gW - 1) * 2;
+  assert.ok(Math.abs(out[leftIdx] - grid[leftIdx]) < 1e-9, 'leftRight pins column 0');
+  assert.ok(Math.abs(out[rightIdx] - grid[rightIdx]) > 0.01, 'leftRight moves last column');
+
+  const flip = springChainShift(grid, gW, gH, [0, 0, 1], 6, 2, { ...mag, axis: 'rightLeft' });
+  assert.ok(Math.abs(flip[rightIdx] - grid[rightIdx]) < 1e-9, 'rightLeft pins last column');
+  assert.ok(Math.abs(flip[leftIdx] - grid[leftIdx]) > 0.01, 'rightLeft moves column 0');
+
+  const down = springChainShift(grid, gW, gH, [0, 0, 1], 6, 2, { ...mag, axis: 'topDown' });
+  const topIdx = 0;
+  const botIdx = ((gH - 1) * gW) * 2;
+  assert.ok(Math.abs(down[topIdx] - grid[topIdx]) < 1e-9, 'topDown pins row 0');
+  assert.ok(Math.abs(down[botIdx] - grid[botIdx]) > 0.01, 'topDown moves last row');
+
+  const up = springChainShift(grid, gW, gH, [0, 0, 1], 6, 2, { ...mag, axis: 'downTop' });
+  assert.ok(Math.abs(up[botIdx] - grid[botIdx]) < 1e-9, 'downTop pins last row');
+  assert.ok(Math.abs(up[topIdx] - grid[topIdx]) > 0.01, 'downTop moves row 0');
 });
 
 expect('cartesianKeyTuples is 3^N with binding[0] fastest', () => {
@@ -165,6 +203,7 @@ expect('addSpringChain writes params, warp bands, physics, and the record', () =
   assert.equal(warp.bindings.length, 3);
   assert.equal(warp.keyforms.length, 27);
   assert.equal(warp._userAuthored, true);
+  assert.equal(result.chain.axis, 'auto');
   for (const kf of warp.keyforms) {
     assert.ok(Array.isArray(kf.positions), 'keyform positions must be a plain Array (KEYFORM_EVAL skips TypedArrays)');
   }
@@ -209,13 +248,14 @@ expect('removeSpringChain restores the tag warp and default physics', () => {
 
 expect('reseedSpringChains rebuilds after a wipe', () => {
   const project = makeHairProject();
-  addSpringChain(project, 'part_hair', { jointCount: 2 });
+  addSpringChain(project, 'part_hair', { jointCount: 2, axis: 'topDown' });
   project.nodes[0].modifiers = project.nodes[0].modifiers.filter((m) => m.type !== 'physicsModifier');
   const n = reseedSpringChains(project);
   assert.equal(n, 1);
   const rules = gatherPhysicsRules(project);
   assert.ok(rules.some((r) => r.id === springChainRuleId('part_hair')));
   assert.equal(findSpringChain(project, 'part_hair')?.jointCount, 2);
+  assert.equal(findSpringChain(project, 'part_hair')?.axis, 'topDown');
 });
 
 expect('idle gen keys ParamWind and skips spring outputs', () => {

@@ -8,22 +8,31 @@
  * @module v3/editors/properties/sections/SpringChainSection
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Wind } from 'lucide-react';
 import { useProjectStore } from '../../../../store/projectStore.js';
 import { SectionShell } from './SectionShell.jsx';
 import { PropertyRow } from '../primitives/PropertyRow.jsx';
 import { NumberField } from '../fields/NumberField.jsx';
+import * as SelectImpl from '../../../../components/ui/select.jsx';
 import {
   DEFAULT_JOINTS,
   MAX_JOINTS,
   MIN_JOINTS,
+  SPRING_AXES,
+  SPRING_AXIS_AUTO,
+  SPRING_AXIS_LABELS,
   addSpringChain,
   canAddSpringChain,
   findSpringChain,
+  normalizeSpringAxis,
   removeSpringChain,
 } from '../../../../io/live2d/rig/springChain.js';
 import { getRigWarpNodes } from '../../../../io/live2d/rig/deformerNodeReaders.js';
+
+/** @type {Record<string, React.ComponentType<any>>} */
+const Sel = /** @type {any} */ (SelectImpl);
+const { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } = Sel;
 
 /**
  * @param {Object} props
@@ -34,6 +43,7 @@ export function SpringChainSection({ nodeId }) {
   const springChains = useProjectStore((s) => s.project.springChains);
   const updateProject = useProjectStore((s) => s.updateProject);
   const [jointCount, setJointCount] = useState(DEFAULT_JOINTS);
+  const [axis, setAxis] = useState(SPRING_AXIS_AUTO);
   const [message, setMessage] = useState(/** @type {string|null} */ (null));
 
   const chain = useMemo(
@@ -44,6 +54,11 @@ export function SpringChainSection({ nodeId }) {
     const project = useProjectStore.getState().project;
     return canAddSpringChain(project, nodeId);
   }, [nodes, nodeId, springChains]);
+
+  useEffect(() => {
+    setAxis(normalizeSpringAxis(chain?.axis));
+    if (chain?.jointCount) setJointCount(chain.jointCount);
+  }, [nodeId, chain?.axis, chain?.jointCount]);
 
   function apply(fn) {
     setMessage(null);
@@ -62,6 +77,39 @@ export function SpringChainSection({ nodeId }) {
     }
   }
 
+  function rebuild(nextAxis, nextJoints) {
+    apply((proj) => {
+      const removed = removeSpringChain(proj, nodeId);
+      if (!removed.ok) return removed;
+      return addSpringChain(proj, nodeId, {
+        jointCount: nextJoints ?? jointCount,
+        axis: nextAxis ?? axis,
+      });
+    });
+  }
+
+  const axisSelect = (
+    <Select
+      value={axis}
+      onValueChange={(v) => {
+        const next = normalizeSpringAxis(v);
+        setAxis(next);
+        if (chain) rebuild(next, jointCount);
+      }}
+    >
+      <SelectTrigger className="h-6 text-xs px-2 py-0 w-full">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {SPRING_AXES.map((id) => (
+          <SelectItem key={id} value={id} className="text-xs">
+            {SPRING_AXIS_LABELS[id]}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+
   return (
     <SectionShell id="springChain" label="Spring Chain" icon={<Wind size={11} />}>
       {chain ? (
@@ -70,6 +118,9 @@ export function SpringChainSection({ nodeId }) {
             <span className="text-[11px] text-foreground tabular-nums">
               {chain.jointCount}
             </span>
+          </PropertyRow>
+          <PropertyRow label="Axis" title="Which warp-grid edge stays pinned">
+            {axisSelect}
           </PropertyRow>
           <PropertyRow label="Params" alignTop>
             <span className="text-[10px] text-muted-foreground font-mono break-all">
@@ -84,11 +135,7 @@ export function SpringChainSection({ nodeId }) {
             <button
               type="button"
               className="h-6 px-2 text-[11px] rounded border border-border bg-background hover:bg-muted"
-              onClick={() => apply((proj) => {
-                const removed = removeSpringChain(proj, nodeId);
-                if (!removed.ok) return removed;
-                return addSpringChain(proj, nodeId, { jointCount });
-              })}
+              onClick={() => rebuild(axis, jointCount)}
             >
               Rebuild ({jointCount})
             </button>
@@ -126,13 +173,16 @@ export function SpringChainSection({ nodeId }) {
             disabled={!gate.ok}
             onCommit={(v) => setJointCount(Math.max(MIN_JOINTS, Math.min(MAX_JOINTS, Math.round(v))))}
           />
+          <PropertyRow label="Axis" title="Which warp-grid edge stays pinned">
+            {axisSelect}
+          </PropertyRow>
           <div className="px-2 pb-2">
             <button
               type="button"
               className="h-6 px-2 text-[11px] rounded border border-border bg-background hover:bg-muted disabled:opacity-50"
               disabled={!gate.ok}
               title={gate.ok ? 'Add a spring chain to this part' : gate.reason}
-              onClick={() => apply((proj) => addSpringChain(proj, nodeId, { jointCount }))}
+              onClick={() => apply((proj) => addSpringChain(proj, nodeId, { jointCount, axis }))}
             >
               Add spring chain
             </button>

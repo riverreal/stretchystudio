@@ -38,6 +38,32 @@ export const MIN_JOINTS = 2;
 export const MAX_JOINTS = 4;
 export const DEFAULT_JOINTS = 3;
 
+/** @typedef {'auto'|'topDown'|'downTop'|'leftRight'|'rightLeft'} SpringAxis */
+
+export const SPRING_AXIS_AUTO = 'auto';
+export const SPRING_AXIS_TOP_DOWN = 'topDown';
+export const SPRING_AXIS_DOWN_TOP = 'downTop';
+export const SPRING_AXIS_LEFT_RIGHT = 'leftRight';
+export const SPRING_AXIS_RIGHT_LEFT = 'rightLeft';
+
+/** @type {readonly SpringAxis[]} */
+export const SPRING_AXES = Object.freeze([
+  SPRING_AXIS_AUTO,
+  SPRING_AXIS_TOP_DOWN,
+  SPRING_AXIS_DOWN_TOP,
+  SPRING_AXIS_LEFT_RIGHT,
+  SPRING_AXIS_RIGHT_LEFT,
+]);
+
+/** @type {Readonly<Record<SpringAxis, string>>} */
+export const SPRING_AXIS_LABELS = Object.freeze({
+  auto: 'Auto (long axis)',
+  topDown: 'Top → down',
+  downTop: 'Down → top',
+  leftRight: 'Left → right',
+  rightLeft: 'Right → left',
+});
+
 const JOINT_KEYS = Object.freeze([-1, 0, 1]);
 const DEFAULT_MIGRATED_MODE = 7;
 const SWAY_PARAM_IDS = new Set([
@@ -49,6 +75,7 @@ const SWAY_PARAM_IDS = new Set([
  * @typedef {Object} SpringChainRecord
  * @property {string} partId
  * @property {number} jointCount
+ * @property {SpringAxis} [axis]
  * @property {string[]} paramIds
  * @property {string} physicsRuleId
  * @property {string} [replacedParamId]
@@ -124,8 +151,52 @@ export function springBandWeight(frac, j, n) {
 }
 
 /**
- * Shift a rest grid by N joint values. Long-axis banding: Y if the
- * bbox is taller than wide, otherwise X (sideways straps).
+ * @param {unknown} axis
+ * @returns {SpringAxis}
+ */
+export function normalizeSpringAxis(axis) {
+  if (axis === SPRING_AXIS_TOP_DOWN || axis === SPRING_AXIS_DOWN_TOP
+    || axis === SPRING_AXIS_LEFT_RIGHT || axis === SPRING_AXIS_RIGHT_LEFT) {
+    return axis;
+  }
+  return SPRING_AXIS_AUTO;
+}
+
+/**
+ * Resolve Auto to a concrete direction from the warp bbox.
+ * Taller than wide → top→down; otherwise left→right.
+ *
+ * @param {unknown} axis
+ * @param {number} gxSpan
+ * @param {number} gySpan
+ * @returns {Exclude<SpringAxis, 'auto'>}
+ */
+export function resolveSpringAxis(axis, gxSpan, gySpan) {
+  const a = normalizeSpringAxis(axis);
+  if (a !== SPRING_AXIS_AUTO) return a;
+  return Math.abs(gySpan) >= Math.abs(gxSpan)
+    ? SPRING_AXIS_TOP_DOWN
+    : SPRING_AXIS_LEFT_RIGHT;
+}
+
+/**
+ * @param {Exclude<SpringAxis, 'auto'>} axis
+ * @param {number} r
+ * @param {number} c
+ * @param {number} gW
+ * @param {number} gH
+ */
+function bandFrac(axis, r, c, gW, gH) {
+  if (axis === SPRING_AXIS_TOP_DOWN) return gH <= 1 ? 0 : r / (gH - 1);
+  if (axis === SPRING_AXIS_DOWN_TOP) return gH <= 1 ? 0 : 1 - r / (gH - 1);
+  if (axis === SPRING_AXIS_LEFT_RIGHT) return gW <= 1 ? 0 : c / (gW - 1);
+  return gW <= 1 ? 0 : 1 - c / (gW - 1);
+}
+
+/**
+ * Shift a rest grid by N joint values. Default (Auto) bands along the
+ * long bbox axis. An explicit axis pins a chosen edge (top / bottom /
+ * left / right) and waves toward the opposite side.
  *
  * @param {Float64Array|number[]} grid
  * @param {number} gW
@@ -133,23 +204,22 @@ export function springBandWeight(frac, j, n) {
  * @param {number[]} keyValues
  * @param {number} gxSpan
  * @param {number} gySpan
- * @param {{ xSway?: number, yCurl?: number }} [magnitudes]
+ * @param {{ xSway?: number, yCurl?: number, axis?: SpringAxis }} [magnitudes]
  * @returns {Float64Array}
  */
 export function springChainShift(grid, gW, gH, keyValues, gxSpan, gySpan, magnitudes = {}) {
   const pos = new Float64Array(grid);
   const n = keyValues.length;
   if (n === 0 || gW < 1 || gH < 1) return pos;
-  const alongY = Math.abs(gySpan) >= Math.abs(gxSpan);
+  const axis = resolveSpringAxis(magnitudes.axis, gxSpan, gySpan);
+  const alongY = axis === SPRING_AXIS_TOP_DOWN || axis === SPRING_AXIS_DOWN_TOP;
   const xSway = Number.isFinite(magnitudes.xSway) ? /** @type {number} */ (magnitudes.xSway) : 0.10;
   const yCurl = Number.isFinite(magnitudes.yCurl) ? /** @type {number} */ (magnitudes.yCurl) : 0.025;
   const scale = Math.min(Math.abs(gxSpan) || 1, Math.abs(gySpan) || 1);
 
   for (let r = 0; r < gH; r++) {
     for (let c = 0; c < gW; c++) {
-      const frac = alongY
-        ? (gH <= 1 ? 0 : r / (gH - 1))
-        : (gW <= 1 ? 0 : c / (gW - 1));
+      const frac = bandFrac(axis, r, c, gW, gH);
       let dx = 0;
       let dy = 0;
       for (let j = 0; j < n; j++) {
@@ -366,8 +436,9 @@ function writeWarpKeyforms(project, warp, bindings, shiftFn) {
  * @param {object} project
  * @param {string} partId
  * @param {string[]} paramIds
+ * @param {SpringAxis} [axis]
  */
-function applySpringChainWarpKeyforms(project, partId, paramIds) {
+function applySpringChainWarpKeyforms(project, partId, paramIds, axis) {
   const warp = getRigWarpNodes(project).get(partId);
   if (!warp) return false;
   const bindings = paramIds.map((parameterId) => ({
@@ -380,6 +451,7 @@ function applySpringChainWarpKeyforms(project, partId, paramIds) {
     springChainShift(grid, gW, gH, keys, gx, gy, {
       xSway: mags.hairBackXSway,
       yCurl: mags.hairBackYCurl,
+      axis,
     })
   ));
 }
@@ -524,7 +596,7 @@ function ensureJointParam(project, partId, index) {
  *
  * @param {object} project
  * @param {string} partId
- * @param {{ jointCount?: number }} [opts]
+ * @param {{ jointCount?: number, axis?: SpringAxis }} [opts]
  * @returns {SpringChainResult}
  */
 export function addSpringChain(project, partId, opts = {}) {
@@ -534,6 +606,7 @@ export function addSpringChain(project, partId, opts = {}) {
   let jointCount = Number.isFinite(opts.jointCount) ? Math.round(/** @type {number} */ (opts.jointCount)) : DEFAULT_JOINTS;
   if (jointCount < MIN_JOINTS) jointCount = MIN_JOINTS;
   if (jointCount > MAX_JOINTS) jointCount = MAX_JOINTS;
+  const axis = normalizeSpringAxis(opts.axis);
 
   if (findSpringChain(project, partId)) {
     const removed = removeSpringChain(project, partId);
@@ -553,7 +626,7 @@ export function addSpringChain(project, partId, opts = {}) {
     paramIds.push(ensureJointParam(project, partId, i).id);
   }
 
-  if (!applySpringChainWarpKeyforms(project, partId, paramIds)) {
+  if (!applySpringChainWarpKeyforms(project, partId, paramIds, axis)) {
     return { ok: false, reason: 'Could not write warp keyforms on this part.' };
   }
 
@@ -567,6 +640,7 @@ export function addSpringChain(project, partId, opts = {}) {
   const chain = {
     partId,
     jointCount,
+    axis,
     paramIds: paramIds.slice(),
     physicsRuleId: rule.id,
     replacedParamId: replaced[0],
@@ -578,7 +652,11 @@ export function addSpringChain(project, partId, opts = {}) {
   const warnings = [];
   const rest = getWarpRestGrid(warp, project);
   const dims = rest ? resolveWarpGridDims(warp, rest) : null;
-  if (dims && dims.gH < jointCount + 1) {
+  const spans = rest && dims ? gridSpans(rest, dims.gW, dims.gH) : null;
+  const resolved = spans ? resolveSpringAxis(axis, spans.gxSpan, spans.gySpan) : axis;
+  const alongY = resolved === SPRING_AXIS_TOP_DOWN || resolved === SPRING_AXIS_DOWN_TOP;
+  const bandCount = dims ? (alongY ? dims.gH : dims.gW) : 0;
+  if (dims && bandCount < jointCount + 1) {
     warnings.push('Warp grid is coarse for this many joints — the wave will look stepped. Re-Init Rig after increasing warp rows for a smoother cascade.');
   }
 
@@ -627,12 +705,16 @@ export function reseedSpringChains(project) {
   const snapshot = project.springChains.map((c) => ({
     partId: c.partId,
     jointCount: c.jointCount,
+    axis: c.axis,
   }));
   project.springChains = [];
   let applied = 0;
   for (const rec of snapshot) {
     if (!rec?.partId) continue;
-    const result = addSpringChain(project, rec.partId, { jointCount: rec.jointCount });
+    const result = addSpringChain(project, rec.partId, {
+      jointCount: rec.jointCount,
+      axis: rec.axis,
+    });
     if (result.ok) applied += 1;
   }
   return applied;
