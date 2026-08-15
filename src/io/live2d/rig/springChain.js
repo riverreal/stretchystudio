@@ -37,6 +37,10 @@ export const PARAM_WIND_ID = 'ParamWind';
 export const MIN_JOINTS = 2;
 export const MAX_JOINTS = 4;
 export const DEFAULT_JOINTS = 3;
+/** 0 = snappier cascade, 1 = heavy cloth wave (tip crawls). */
+export const MIN_LAG = 0;
+export const MAX_LAG = 1;
+export const DEFAULT_LAG = 0.85;
 
 /** @typedef {'auto'|'topDown'|'downTop'|'leftRight'|'rightLeft'} SpringAxis */
 
@@ -76,6 +80,7 @@ const SWAY_PARAM_IDS = new Set([
  * @property {string} partId
  * @property {number} jointCount
  * @property {SpringAxis} [axis]
+ * @property {number} [lag]
  * @property {string[]} paramIds
  * @property {string} physicsRuleId
  * @property {string} [replacedParamId]
@@ -145,9 +150,25 @@ export function canAddSpringChain(project, partId) {
 export function springBandWeight(frac, j, n) {
   if (!(frac > 0) || n <= 0) return 0;
   const peak = (j + 1) / n;
-  const sigma = Math.max(0.18, 0.65 / n);
+  // Narrower than a 0.65/n blob so neighbouring joints don't mush into
+  // one jelly mass — each band stays a distinct travelling-wave crest.
+  const sigma = Math.max(0.12, 0.40 / n);
   const d = (frac - peak) / sigma;
   return frac * Math.exp(-0.5 * d * d);
+}
+
+/**
+ * @param {unknown} lag
+ * @returns {number}
+ */
+export function normalizeSpringLag(lag) {
+  if (!Number.isFinite(lag)) return DEFAULT_LAG;
+  return Math.max(MIN_LAG, Math.min(MAX_LAG, Number(lag)));
+}
+
+/** @param {number} a @param {number} b @param {number} t */
+function lerp(a, b, t) {
+  return a + (b - a) * t;
 }
 
 /**
@@ -297,29 +318,39 @@ export function ensureParamWind(project) {
 }
 
 /**
+ * Cubism pendulum for a travelling-wave chain.
+ *
+ * Cubism `delay` is inverted vs intuition: **smaller = more phase lag**.
+ * The old defaults barely dropped delay (0.77→0.53) and *raised*
+ * acceleration toward the tip, so every joint bounced in phase —
+ * pudding, not cloth. Tip delay/mobility/accel now fall off, and
+ * radius grows, so the wave takes time to crawl down the mesh.
+ *
  * @param {string} partId
  * @param {string[]} paramIds
- * @param {{ tag?: string|null }} [opts]
+ * @param {{ tag?: string|null, lag?: number }} [opts]
  */
 export function buildSpringChainPhysicsRule(partId, paramIds, opts = {}) {
   const n = paramIds.length;
   const tag = opts.tag ?? null;
   const hairLike = tag === 'front hair' || tag === 'back hair';
-  const step = hairLike ? 8 : 6;
+  const lag = normalizeSpringLag(opts.lag);
+  // Longer rods = the gust takes more frames to reach the tip.
+  const step = (hairLike ? 14 : 12) * (0.65 + lag * 0.70);
   /** @type {Array<{x:number,y:number,mobility:number,delay:number,acceleration:number,radius:number}>} */
   const vertices = [
     { x: 0, y: 0, mobility: 1.0, delay: 1.0, acceleration: 1.0, radius: 0 },
   ];
   for (let i = 1; i <= n; i++) {
-    const y = i * step;
-    vertices.push({
-      x: 0,
-      y,
-      mobility: Math.max(0.75, 0.95 - i * 0.04),
-      delay: Math.max(0.45, 0.85 - i * 0.08),
-      acceleration: 1.2 + i * 0.1,
-      radius: step,
-    });
+    const t = n <= 1 ? 1 : (i - 1) / Math.max(1, n - 1);
+    const delay = lerp(lerp(0.88, 0.80, lag), lerp(0.62, 0.16, lag), t);
+    const mobility = lerp(lerp(0.92, 0.86, lag), lerp(0.78, 0.38, lag), t);
+    // Cloth follow-through: gravity weakens down the chain. Raising
+    // accel toward the tip is what made the old chain read as jelly.
+    const acceleration = lerp(lerp(1.25, 1.05, lag), lerp(1.45, 0.45, lag), t);
+    const radius = step * (1 + t * lerp(0.05, 0.45, lag));
+    const y = vertices[vertices.length - 1].y + radius;
+    vertices.push({ x: 0, y, mobility, delay, acceleration, radius });
   }
   const inputs = [
     { paramId: PARAM_WIND_ID, type: 'SRC_TO_X', weight: 80 },
@@ -328,12 +359,15 @@ export function buildSpringChainPhysicsRule(partId, paramIds, opts = {}) {
     { paramId: 'ParamBodyAngleX', type: 'SRC_TO_X', weight: hairLike ? 30 : 60 },
     { paramId: 'ParamBodyAngleZ', type: 'SRC_TO_G_ANGLE', weight: hairLike ? 30 : 60 },
   ];
-  const outputs = paramIds.map((paramId, i) => ({
-    paramId,
-    vertexIndex: i + 1,
-    scale: 1.0,
-    isReverse: false,
-  }));
+  const outputs = paramIds.map((paramId, i) => {
+    const t = n <= 1 ? 1 : i / Math.max(1, n - 1);
+    return {
+      paramId,
+      vertexIndex: i + 1,
+      scale: 1.0 + t * lerp(0.08, 0.40, lag),
+      isReverse: false,
+    };
+  });
   return {
     id: springChainRuleId(partId),
     name: 'Spring Chain',
@@ -596,7 +630,7 @@ function ensureJointParam(project, partId, index) {
  *
  * @param {object} project
  * @param {string} partId
- * @param {{ jointCount?: number, axis?: SpringAxis }} [opts]
+ * @param {{ jointCount?: number, axis?: SpringAxis, lag?: number }} [opts]
  * @returns {SpringChainResult}
  */
 export function addSpringChain(project, partId, opts = {}) {
@@ -607,6 +641,7 @@ export function addSpringChain(project, partId, opts = {}) {
   if (jointCount < MIN_JOINTS) jointCount = MIN_JOINTS;
   if (jointCount > MAX_JOINTS) jointCount = MAX_JOINTS;
   const axis = normalizeSpringAxis(opts.axis);
+  const lag = normalizeSpringLag(opts.lag);
 
   if (findSpringChain(project, partId)) {
     const removed = removeSpringChain(project, partId);
@@ -631,7 +666,7 @@ export function addSpringChain(project, partId, opts = {}) {
   }
 
   const tag = matchTag(part.name ?? '') ?? part.tag ?? null;
-  const rule = buildSpringChainPhysicsRule(partId, paramIds, { tag });
+  const rule = buildSpringChainPhysicsRule(partId, paramIds, { tag, lag });
   stripSpringPhysicsModifiers(project, rule.id);
   attachSpringPhysicsModifiers(part, rule);
 
@@ -641,6 +676,7 @@ export function addSpringChain(project, partId, opts = {}) {
     partId,
     jointCount,
     axis,
+    lag,
     paramIds: paramIds.slice(),
     physicsRuleId: rule.id,
     replacedParamId: replaced[0],
@@ -706,6 +742,7 @@ export function reseedSpringChains(project) {
     partId: c.partId,
     jointCount: c.jointCount,
     axis: c.axis,
+    lag: c.lag,
   }));
   project.springChains = [];
   let applied = 0;
@@ -714,6 +751,7 @@ export function reseedSpringChains(project) {
     const result = addSpringChain(project, rec.partId, {
       jointCount: rec.jointCount,
       axis: rec.axis,
+      lag: rec.lag,
     });
     if (result.ok) applied += 1;
   }

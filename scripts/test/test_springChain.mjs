@@ -8,6 +8,7 @@ import {
   addSpringChain,
   buildSpringChainPhysicsRule,
   canAddSpringChain,
+  DEFAULT_LAG,
   cartesianKeyTuples,
   findSpringChain,
   removeSpringChain,
@@ -204,6 +205,7 @@ expect('addSpringChain writes params, warp bands, physics, and the record', () =
   assert.equal(warp.keyforms.length, 27);
   assert.equal(warp._userAuthored, true);
   assert.equal(result.chain.axis, 'auto');
+  assert.equal(result.chain.lag, DEFAULT_LAG);
   for (const kf of warp.keyforms) {
     assert.ok(Array.isArray(kf.positions), 'keyform positions must be a plain Array (KEYFORM_EVAL skips TypedArrays)');
   }
@@ -229,6 +231,26 @@ expect('buildSpringChainPhysicsRule has N+1 vertices and wind input', () => {
   assert.equal(rule.inputs[0].paramId, PARAM_WIND_ID);
 });
 
+expect('buildSpringChainPhysicsRule lags the tip more than the root joint', () => {
+  const rule = buildSpringChainPhysicsRule('p', ['a', 'b', 'c'], { lag: 1 });
+  const near = rule.vertices[1];
+  const tip = rule.vertices[3];
+  assert.ok(tip.delay < near.delay, `tip delay ${tip.delay} should be < near ${near.delay}`);
+  assert.ok(tip.mobility < near.mobility, `tip mobility ${tip.mobility} should be < near ${near.mobility}`);
+  assert.ok(tip.acceleration < near.acceleration, `tip accel ${tip.acceleration} should be < near ${near.acceleration}`);
+  assert.ok(tip.radius > near.radius, `tip radius ${tip.radius} should be > near ${near.radius}`);
+  assert.ok(rule.outputs[2].scale > rule.outputs[0].scale, 'tip output scale grows');
+});
+
+expect('buildSpringChainPhysicsRule lag=1 drops tip delay harder than lag=0', () => {
+  const snappy = buildSpringChainPhysicsRule('p', ['a', 'b', 'c'], { lag: 0 });
+  const cloth = buildSpringChainPhysicsRule('p', ['a', 'b', 'c'], { lag: 1 });
+  assert.ok(
+    cloth.vertices[3].delay < snappy.vertices[3].delay,
+    `cloth tip delay ${cloth.vertices[3].delay} should be < snappy ${snappy.vertices[3].delay}`,
+  );
+});
+
 expect('removeSpringChain restores the tag warp and default physics', () => {
   const project = makeHairProject();
   addSpringChain(project, 'part_hair', { jointCount: 3 });
@@ -248,7 +270,7 @@ expect('removeSpringChain restores the tag warp and default physics', () => {
 
 expect('reseedSpringChains rebuilds after a wipe', () => {
   const project = makeHairProject();
-  addSpringChain(project, 'part_hair', { jointCount: 2, axis: 'topDown' });
+  addSpringChain(project, 'part_hair', { jointCount: 2, axis: 'topDown', lag: 1 });
   project.nodes[0].modifiers = project.nodes[0].modifiers.filter((m) => m.type !== 'physicsModifier');
   const n = reseedSpringChains(project);
   assert.equal(n, 1);
@@ -256,6 +278,7 @@ expect('reseedSpringChains rebuilds after a wipe', () => {
   assert.ok(rules.some((r) => r.id === springChainRuleId('part_hair')));
   assert.equal(findSpringChain(project, 'part_hair')?.jointCount, 2);
   assert.equal(findSpringChain(project, 'part_hair')?.axis, 'topDown');
+  assert.equal(findSpringChain(project, 'part_hair')?.lag, 1);
 });
 
 expect('idle gen keys ParamWind and skips spring outputs', () => {

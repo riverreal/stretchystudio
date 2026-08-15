@@ -17,8 +17,11 @@ import { NumberField } from '../fields/NumberField.jsx';
 import * as SelectImpl from '../../../../components/ui/select.jsx';
 import {
   DEFAULT_JOINTS,
+  DEFAULT_LAG,
   MAX_JOINTS,
+  MAX_LAG,
   MIN_JOINTS,
+  MIN_LAG,
   SPRING_AXES,
   SPRING_AXIS_AUTO,
   SPRING_AXIS_LABELS,
@@ -26,6 +29,7 @@ import {
   canAddSpringChain,
   findSpringChain,
   normalizeSpringAxis,
+  normalizeSpringLag,
   removeSpringChain,
 } from '../../../../io/live2d/rig/springChain.js';
 import { getRigWarpNodes } from '../../../../io/live2d/rig/deformerNodeReaders.js';
@@ -44,6 +48,7 @@ export function SpringChainSection({ nodeId }) {
   const updateProject = useProjectStore((s) => s.updateProject);
   const [jointCount, setJointCount] = useState(DEFAULT_JOINTS);
   const [axis, setAxis] = useState(SPRING_AXIS_AUTO);
+  const [lag, setLag] = useState(DEFAULT_LAG);
   const [message, setMessage] = useState(/** @type {string|null} */ (null));
 
   const chain = useMemo(
@@ -58,7 +63,8 @@ export function SpringChainSection({ nodeId }) {
   useEffect(() => {
     setAxis(normalizeSpringAxis(chain?.axis));
     if (chain?.jointCount) setJointCount(chain.jointCount);
-  }, [nodeId, chain?.axis, chain?.jointCount]);
+    setLag(normalizeSpringLag(chain?.lag));
+  }, [nodeId, chain?.axis, chain?.jointCount, chain?.lag]);
 
   function apply(fn) {
     setMessage(null);
@@ -77,13 +83,14 @@ export function SpringChainSection({ nodeId }) {
     }
   }
 
-  function rebuild(nextAxis, nextJoints) {
+  function rebuild(nextAxis, nextJoints, nextLag) {
     apply((proj) => {
       const removed = removeSpringChain(proj, nodeId);
       if (!removed.ok) return removed;
       return addSpringChain(proj, nodeId, {
         jointCount: nextJoints ?? jointCount,
         axis: nextAxis ?? axis,
+        lag: nextLag ?? lag,
       });
     });
   }
@@ -122,20 +129,34 @@ export function SpringChainSection({ nodeId }) {
           <PropertyRow label="Axis" title="Which warp-grid edge stays pinned">
             {axisSelect}
           </PropertyRow>
+          <NumberField
+            label="Wave lag"
+            title="How late the tip follows. 0 is snappier; 1 is heavy cloth."
+            value={lag}
+            min={MIN_LAG}
+            max={MAX_LAG}
+            step={0.05}
+            precision={2}
+            onCommit={(v) => {
+              const next = normalizeSpringLag(v);
+              setLag(next);
+              rebuild(axis, jointCount, next);
+            }}
+          />
           <PropertyRow label="Params" alignTop>
             <span className="text-[10px] text-muted-foreground font-mono break-all">
               {(chain.paramIds ?? []).join(', ')}
             </span>
           </PropertyRow>
           <p className="px-2 pb-1 text-[10px] text-muted-foreground leading-snug">
-            Idle generation keys ParamWind; physics lags each joint down the
-            mesh. Bake is automatic when you generate a motion.
+            Idle generation keys ParamWind; further joints lag more so the
+            mesh waves like cloth. Bake is automatic when you generate a motion.
           </p>
           <div className="flex gap-1 px-2 pb-2">
             <button
               type="button"
               className="h-6 px-2 text-[11px] rounded border border-border bg-background hover:bg-muted"
-              onClick={() => rebuild(axis, jointCount)}
+              onClick={() => rebuild(axis, jointCount, lag)}
             >
               Rebuild ({jointCount})
             </button>
@@ -176,13 +197,24 @@ export function SpringChainSection({ nodeId }) {
           <PropertyRow label="Axis" title="Which warp-grid edge stays pinned">
             {axisSelect}
           </PropertyRow>
+          <NumberField
+            label="Wave lag"
+            title="How late the tip follows. 0 is snappier; 1 is heavy cloth."
+            value={lag}
+            min={MIN_LAG}
+            max={MAX_LAG}
+            step={0.05}
+            precision={2}
+            disabled={!gate.ok}
+            onCommit={(v) => setLag(normalizeSpringLag(v))}
+          />
           <div className="px-2 pb-2">
             <button
               type="button"
               className="h-6 px-2 text-[11px] rounded border border-border bg-background hover:bg-muted disabled:opacity-50"
               disabled={!gate.ok}
               title={gate.ok ? 'Add a spring chain to this part' : gate.reason}
-              onClick={() => apply((proj) => addSpringChain(proj, nodeId, { jointCount, axis }))}
+              onClick={() => apply((proj) => addSpringChain(proj, nodeId, { jointCount, axis, lag }))}
             >
               Add spring chain
             </button>
