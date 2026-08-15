@@ -232,14 +232,16 @@ function synthesiseKeyframes(paramId, def, durationMs, personality, seed, maxBre
     case 'gust':
       kfs = genGusts({
         durationMs,
-        amplitude: cfg.amplitude ?? 0.9,
-        peakMinFrac: cfg.peakMinFrac ?? 0.55,
-        period: cfg.period ?? 2200,
-        intervalJitterMs: cfg.intervalJitterMs ?? 800,
-        attackMs: cfg.attackMs ?? 90,
-        holdMs: cfg.holdMs ?? 160,
-        decayMs: cfg.decayMs ?? 420,
-        restValue: cfg.restValue ?? 0,
+        amplitude: cfg.amplitude ?? 0.85,
+        breezeFrac: cfg.breezeFrac ?? 0.32,
+        turbFrac: cfg.turbFrac ?? 0.2,
+        swellFrac: cfg.swellFrac ?? 0.62,
+        peakMinFrac: cfg.peakMinFrac ?? 0.45,
+        period: cfg.period ?? 2600,
+        intervalJitterMs: cfg.intervalJitterMs ?? 1000,
+        attackMs: cfg.attackMs ?? 340,
+        decayMs: cfg.decayMs ?? 1200,
+        mid: cfg.mid ?? 0,
         seed: seed * 47 + hashCode(paramId),
       });
       break;

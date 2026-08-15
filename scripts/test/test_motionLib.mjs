@@ -122,11 +122,11 @@ function near(a, b, eps = 1e-6) {
   assert(kfs3[5].value !== kfs1[5].value, 'genWander: different seed → different');
 }
 
-// ── genGusts: loop-safe slams, not a calm wander ─────────────────
+// ── genGusts: layered wind, loop-safe, not a square pulse ────────
 
 {
-  const kfs1 = genGusts({ durationMs: 8000, amplitude: 0.9, seed: 42 });
-  const kfs2 = genGusts({ durationMs: 8000, amplitude: 0.9, seed: 42 });
+  const kfs1 = genGusts({ durationMs: 8000, amplitude: 0.85, seed: 42 });
+  const kfs2 = genGusts({ durationMs: 8000, amplitude: 0.85, seed: 42 });
   let same = kfs1.length === kfs2.length;
   if (same) for (let i = 0; i < kfs1.length; i++) {
     if (!near(kfs1[i].value, kfs2[i].value) || !near(kfs1[i].time, kfs2[i].time)) {
@@ -134,19 +134,19 @@ function near(a, b, eps = 1e-6) {
     }
   }
   assert(same, 'genGusts: same seed → identical curve');
-  assert(near(kfs1[0].value, 0) && near(kfs1[kfs1.length - 1].value, 0),
-    'genGusts: endpoints at rest');
+  assert(near(kfs1[0].value, kfs1[kfs1.length - 1].value, 1e-9),
+    'genGusts: loop-safe (first === last)');
   assert(near(kfs1[0].time, 0) && near(kfs1[kfs1.length - 1].time, 8000),
     'genGusts: spans duration');
   assert(kfs1.every((kf) => kf.interpolation === 'linear'),
-    'genGusts: linear attack (no bezier calm-down)');
+    'genGusts: stays linear (flutter survives)');
+  assert(kfs1.length >= 10 && kfs1.length < 50,
+    `genGusts: continuous but thinned (got ${kfs1.length} keys)`);
 
-  const peaks = kfs1.filter((kf) => Math.abs(kf.value) > 0.4);
-  assert(peaks.length >= 2, `genGusts: at least one slam (got ${peaks.length} peak keys)`);
-  const signs = new Set(peaks.map((kf) => Math.sign(kf.value)));
-  assert(signs.has(1) || signs.has(-1), 'genGusts: signed peaks');
+  const peak = Math.max(...kfs1.map((kf) => Math.abs(kf.value)));
+  assert(peak > 0.35, `genGusts: reaches a swell (peak=${peak.toFixed(3)})`);
 
-  // Attack slope must be gust-like, not wander-like. 0.9 over 90ms ≈ 10 /s.
+  // Faster than a 2-harmonic wander (~0.2/s), slower than a 90ms slam (~10/s).
   let maxSlope = 0;
   for (let i = 1; i < kfs1.length; i++) {
     const dt = (kfs1[i].time - kfs1[i - 1].time) / 1000;
@@ -154,9 +154,21 @@ function near(a, b, eps = 1e-6) {
     const slope = Math.abs(kfs1[i].value - kfs1[i - 1].value) / dt;
     if (slope > maxSlope) maxSlope = slope;
   }
-  assert(maxSlope > 4, `genGusts: sudden attack (max |dv/dt|=${maxSlope.toFixed(2)} /s)`);
+  assert(maxSlope > 0.6 && maxSlope < 6,
+    `genGusts: swell-like slope (max |dv/dt|=${maxSlope.toFixed(2)} /s)`);
 
-  const other = genGusts({ durationMs: 8000, amplitude: 0.9, seed: 99 });
+  // No square hold: a long run of nearly-equal values is the old pulse.
+  let maxHold = 1;
+  let hold = 1;
+  for (let i = 1; i < kfs1.length; i++) {
+    if (Math.abs(kfs1[i].value - kfs1[i - 1].value) < 0.02) {
+      hold++;
+      if (hold > maxHold) maxHold = hold;
+    } else hold = 1;
+  }
+  assert(maxHold <= 3, `genGusts: no plateau hold (longest flat run ${maxHold})`);
+
+  const other = genGusts({ durationMs: 8000, amplitude: 0.85, seed: 99 });
   assert(other.some((kf, i) => Math.abs(kf.value - (kfs1[i]?.value ?? 0)) > 1e-3),
     'genGusts: different seed → different curve');
 }

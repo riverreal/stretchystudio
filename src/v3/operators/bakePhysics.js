@@ -95,9 +95,9 @@ import { getBoneRole } from '../../store/objectDataAccess.js';
  * @property {number} [wiggle=1]  Global output-scale multiplier.
  * @property {number} [lag=1]     Pendulum delay multiplier (bounce).
  * @property {number} [wind=1]    ParamWind input-weight multiplier.
- *   Scales the ParamWind input weight. Idle now keys gusts (sudden
- *   ± slams); this still lets a bake hit harder or softer without
- *   rewriting the ParamWind fcurve.
+ *   Scales the ParamWind input weight. Idle keys a layered breeze
+ *   with occasional swells; this still lets a bake hit harder or
+ *   softer without rewriting the ParamWind fcurve.
  * @property {Record<string, number>} [outputStrength]  Per-output
  *   paramId multiplier, composed with `wiggle`. Missing keys = 1.
  */

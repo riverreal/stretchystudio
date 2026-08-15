@@ -7,7 +7,7 @@
  *   - 'sine'      : single-frequency oscillation (breath, body sway)
  *   - 'blink'     : eye open/close events (eye open params)
  *   - 'burst'     : periodic accent events (nods, glances)
- *   - 'gust'      : sudden ± slams (ParamWind — pendulums need impulses)
+ *   - 'gust'      : layered breeze + flutter + swells (ParamWind)
  *   - 'syllables' : speech-like mouth pulses (talking)
  *   - 'constant'  : pin at default rest value (mouth/expression at rest)
  *
@@ -281,25 +281,29 @@ const WIND_LOOP = {
   kind: 'gust',
   cfg: {
     amplitude: 0.9,
-    peakMinFrac: 0.55,
-    period: 2200,
-    intervalJitterMs: 800,
-    attackMs: 90,
-    holdMs: 160,
-    decayMs: 420,
+    breezeFrac: 0.3,
+    turbFrac: 0.18,
+    swellFrac: 0.72,
+    peakMinFrac: 0.45,
+    period: 2600,
+    intervalJitterMs: 1000,
+    attackMs: 340,
+    decayMs: 1200,
   },
 };
 const WIND_HOLD = {
   ...r('ParamWind'),
   kind: 'gust',
   cfg: {
-    amplitude: 0.7,
-    peakMinFrac: 0.5,
-    period: 2800,
-    intervalJitterMs: 600,
-    attackMs: 90,
-    holdMs: 140,
-    decayMs: 380,
+    amplitude: 0.65,
+    breezeFrac: 0.28,
+    turbFrac: 0.16,
+    swellFrac: 0.5,
+    peakMinFrac: 0.4,
+    period: 3200,
+    intervalJitterMs: 800,
+    attackMs: 380,
+    decayMs: 1100,
   },
 };
 for (const entry of Object.values(PRESETS)) {

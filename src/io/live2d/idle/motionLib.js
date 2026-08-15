@@ -16,6 +16,8 @@
  * @module io/live2d/idle/motionLib
  */
 
+import { selectSparseKeyframes } from '../../../anim/simplifyKeyframes.js';
+
 /**
  * Deterministic seeded PRNG (mulberry32). Same seed → same sequence — critical
  * so a regenerated idle for the same character keeps the same feel.
@@ -309,64 +311,126 @@ export function genBurst({
 }
 
 /**
- * Wind gusts — rest, then occasional slams to a random ±peak.
+ * Natural wind — continuous breeze + flutter + occasional swells.
  *
- * Cubism pendulums (spring chains, hair) track a slow input with almost
- * no visible lag. They only wave when the drive jumps and delayed
- * particles get left behind — the same impulse a live ±1 ParamWind
- * drag produces. A calm wander / sine never does that, no matter how
- * high the bake Wind multiplier is.
+ * A calm 2-harmonic wander is too slow: Cubism pendulums track it and
+ * springs look dead. Isolated slam/hold/rest pulses move the springs
+ * but read as a switch being flipped. Real wind is never still, and a
+ * gust is a swell that rises out of the breeze (faster in, slower out)
+ * rather than a square pulse from zero.
  *
- * Each gust is four linear keys (sparse, not a dense polygon):
- *   rest → (attackMs) peak → (holdMs) peak → (decayMs) rest
- * Attack stays linear so physics bake sees a real discontinuity.
- * Signs prefer to alternate. Loop-safe: endpoints stay at restValue
- * and gusts are scheduled inside [edgeBufferMs, D-edgeBufferMs].
+ * Layers (all loop-safe — harmonics complete integer cycles over D,
+ * swells stay in the interior):
+ *   breeze  — 2 slow harmonics (prevailing direction)
+ *   turb    — higher harmonics (constant flutter)
+ *   swells  — smoothstep attack, longer smoothstep decay, no hold
+ *
+ * Sampled at ~12 Hz then thinned so interpolation keeps the shape
+ * without a key on every frame. Stays linear: bezier would round
+ * off the flutter the pendulums need.
  */
 export function genGusts({
   durationMs,
   amplitude = 0.9,
-  peakMinFrac = 0.55,
-  period = 2200,
-  intervalJitterMs = 800,
-  attackMs = 90,
-  holdMs = 160,
-  decayMs = 420,
-  restValue = 0,
-  edgeBufferMs = 500,
+  breezeFrac = 0.3,
+  turbFrac = 0.18,
+  swellFrac = 0.72,
+  peakMinFrac = 0.45,
+  period = 2600,
+  intervalJitterMs = 1000,
+  attackMs = 340,
+  decayMs = 1200,
+  mid = 0,
+  samplesPerSec = 12,
+  edgeBufferMs = 400,
   seed = 1,
 }) {
   const D = durationMs;
   const rng = makeRng(seed);
-  const gustDur = Math.max(1, attackMs + holdMs + decayMs);
-  const minSpacing = gustDur + 350;
+  const breezeAmp = amplitude * breezeFrac;
+  const turbAmp = amplitude * turbFrac;
+  const swellAmp = amplitude * swellFrac;
   const frac = Math.max(0, Math.min(1, peakMinFrac));
+  const attack = Math.max(80, attackMs);
+  const decay = Math.max(attack, decayMs);
+  const swellDur = attack + decay;
 
-  const gusts = [];
+  const breeze = makeWindHarmonics(rng, D, 2, 1);
+  const turb = makeWindHarmonics(rng, D, 4, 3);
+
+  const swells = [];
   let t = edgeBufferMs + rng() * Math.max(1, period);
   let lastSign = rng() < 0.5 ? 1 : -1;
-  while (t + gustDur < D - edgeBufferMs) {
-    const sign = lastSign * (rng() < 0.75 ? -1 : 1);
+  // Swells may overlap during decay — compounding is how real gusts stack.
+  const minSpacing = attack + 180;
+  while (t + swellDur < D - edgeBufferMs) {
+    const sign = lastSign * (rng() < 0.7 ? -1 : 1);
     lastSign = sign;
-    const mag = amplitude * (frac + rng() * (1 - frac));
-    gusts.push({ t, peak: sign * mag });
+    const mag = swellAmp * (frac + rng() * (1 - frac));
+    swells.push({ t, peak: sign * mag, attack, decay });
     const jitter = (rng() * 2 - 1) * intervalJitterMs;
     t += Math.max(minSpacing, period + jitter);
   }
 
-  const kfs = [{ time: 0, value: restValue, interpolation: 'linear' }];
-  for (const g of gusts) {
-    const last = kfs[kfs.length - 1];
-    if (Math.abs(last.time - g.t) > 1 || Math.abs(last.value - restValue) > 1e-6) {
-      kfs.push({ time: g.t, value: restValue, interpolation: 'linear' });
-    }
-    kfs.push({ time: g.t + attackMs, value: g.peak, interpolation: 'linear' });
-    kfs.push({ time: g.t + attackMs + holdMs, value: g.peak, interpolation: 'linear' });
-    kfs.push({ time: g.t + gustDur, value: restValue, interpolation: 'linear' });
+  const evalAt = (time) => {
+    let v = mid;
+    v += breezeAmp * evalWindHarmonics(breeze, time);
+    v += turbAmp * evalWindHarmonics(turb, time);
+    for (const g of swells) v += g.peak * swellEnvelope(time - g.t, g.attack, g.decay);
+    return v;
+  };
+
+  const N = Math.max(16, Math.round((D / 1000) * Math.max(4, samplesPerSec)));
+  const dt = D / N;
+  const dense = [];
+  for (let i = 0; i <= N; i++) {
+    const time = i === N ? D : i * dt;
+    dense.push({ time, value: evalAt(time), interpolation: 'linear' });
   }
-  kfs.push({ time: D, value: restValue, interpolation: 'linear' });
-  kfs.sort((a, b) => a.time - b.time);
-  return kfs;
+  dense[0].time = 0;
+  dense[dense.length - 1].time = D;
+  dense[dense.length - 1].value = dense[0].value;
+
+  const sparse = selectSparseKeyframes(dense, { relativeTolerance: 0.02, minTolerance: 1e-3 });
+  return sparse.map((kf) => ({ ...kf, interpolation: 'linear' }));
+}
+
+/**
+ * @param {() => number} rng
+ * @param {number} durationMs
+ * @param {number} count
+ * @param {number} startK
+ */
+function makeWindHarmonics(rng, durationMs, count, startK) {
+  const comps = [];
+  for (let i = 0; i < count; i++) {
+    const k = startK + i;
+    const w = 1 / Math.sqrt(k);
+    comps.push({
+      a: w * (0.45 + rng() * 0.7),
+      phi: rng() * TWO_PI,
+      omega: (TWO_PI * k) / durationMs,
+    });
+  }
+  const ampSum = comps.reduce((s, c) => s + c.a, 0);
+  return { comps, norm: ampSum > 0 ? 1 / ampSum : 1 };
+}
+
+function evalWindHarmonics(pack, time) {
+  let v = 0;
+  for (const c of pack.comps) v += c.a * Math.sin(c.omega * time + c.phi);
+  return v * pack.norm;
+}
+
+/** Smoothstep up, longer smoothstep down. 0 outside the window. */
+function swellEnvelope(dt, attack, decay) {
+  if (dt < 0 || dt > attack + decay) return 0;
+  if (dt < attack) {
+    const u = dt / attack;
+    return u * u * (3 - 2 * u);
+  }
+  const u = (dt - attack) / decay;
+  return 1 - u * u * (3 - 2 * u);
 }
 
 /**

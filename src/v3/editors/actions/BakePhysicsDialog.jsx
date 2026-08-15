@@ -154,7 +154,7 @@ export function BakePhysicsDialog({ open, onOpenChange }) {
                 onChange={(e) => setWind(numOr(e.target.value, 1))}
               />
               <span className="text-[10px] text-muted-foreground">
-                How hard ParamWind gusts push the pendulums. 1 = authored weight.
+                How hard ParamWind pushes the pendulums. 1 = authored weight.
               </span>
             </div>
           </div>

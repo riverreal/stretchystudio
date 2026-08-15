@@ -144,13 +144,14 @@ assertThrows(() => buildMotion3({ paramIds: [], durationSec: NaN }),
     seed: 1,
   });
   const wind = result.paramKeyframes.get('ParamWind');
-  assert(wind && wind.length >= 4, `ParamWind gusts emitted (got ${wind?.length})`);
+  assert(wind && wind.length >= 10 && wind.length < 50,
+    `ParamWind layered wind emitted (got ${wind?.length})`);
   assert(wind.every((kf) => kf.interpolation === 'linear'),
-    'ParamWind gusts stay linear (not bezier-thinned)');
+    'ParamWind stays linear (not bezier-thinned)');
   const peak = Math.max(...wind.map((kf) => Math.abs(kf.value)));
-  assert(peak > 0.4, `ParamWind reaches a gust peak (got ${peak.toFixed(3)})`);
-  assert(Math.abs(wind[0].value) < 1e-6 && Math.abs(wind[wind.length - 1].value) < 1e-6,
-    'ParamWind loop-safe at rest');
+  assert(peak > 0.3, `ParamWind reaches a swell (got ${peak.toFixed(3)})`);
+  assert(Math.abs(wind[0].value - wind[wind.length - 1].value) < 1e-6,
+    'ParamWind loop-safe');
 }
 
 // ── buildIdleMotion3 alias ────────────────────────────────────────
