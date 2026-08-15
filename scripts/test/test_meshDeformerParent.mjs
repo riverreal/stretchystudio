@@ -250,5 +250,62 @@ const legPart = {
   assertEq(resolved.deformerIndex, 0, 'incomplete rigWarp: parent stays BodyXWarp');
 }
 
+// ── 7. Rigid-follow extra without a dedicated warp must NOT parent to BodyX ──
+
+{
+  const extra = {
+    id: 'objects',
+    name: 'objects',
+    parent: 'torso',
+    modifiers: [
+      { type: 'armature', enabled: true },
+      { type: 'lattice', enabled: false },
+    ],
+    mesh: { vertices: [{ x: 100, y: 200 }] },
+  };
+  const ctx = baseCtx();
+  const resolved = resolveMeshDeformerParent(extra, ctx);
+  assertEq(resolved.kind, 'bodyWarp', 'rigid extra (no warp): kind stays bodyWarp sentinel');
+  assertEq(resolved.deformerIndex, -1, 'rigid extra (no warp): parent is root, not BodyX');
+}
+
+// ── 8. Rigid-follow extra with RigidFollow_* warp parents to that warp ──
+
+{
+  const follow = {
+    id: 'RigidFollow_objects',
+    targetPartId: 'objects',
+    canvasBbox: { minX: 80, minY: 180, W: 40, H: 40 },
+    parent: { type: 'root', id: null },
+    gridSize: { rows: 1, cols: 1 },
+    keyforms: [{ positions: [80, 180, 120, 180, 80, 220, 120, 220], opacity: 1 }],
+    localFrame: 'canvas-px',
+    rigidFollow: true,
+  };
+  const extra = {
+    id: 'objects',
+    name: 'objects',
+    modifiers: [
+      { type: 'armature', enabled: true },
+      { type: 'lattice', enabled: false },
+    ],
+    mesh: { vertices: [{ x: 100, y: 200 }] },
+  };
+  const ctx = baseCtx({
+    warpSpecs: [bodyWarp, follow],
+    deformerIdToIndex: new Map([['BodyXWarp', 0], ['RigidFollow_objects', 1]]),
+  });
+  const resolved = resolveMeshDeformerParent(extra, ctx);
+  assertEq(resolved.kind, 'rigWarp', 'rigid extra + follow warp: kind is rigWarp');
+  assertEq(resolved.deformerIndex, 1, 'rigid extra + follow warp: parent is RigidFollow_*');
+
+  const [lx, ly] = encodeVertexInParentFrame(100, 200, resolved, {
+    rigSpec: { canvasToInnermostX: innermostX, canvasToInnermostY: innermostY },
+    canvasW, canvasH,
+  });
+  assertClose(lx, (100 - 80) / 40, 'rigid extra: x is 0..1 of follow canvasBbox');
+  assertClose(ly, (200 - 180) / 40, 'rigid extra: y is 0..1 of follow canvasBbox');
+}
+
 console.log(`meshDeformerParent: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

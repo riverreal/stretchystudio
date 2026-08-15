@@ -45,6 +45,7 @@ import { matchTag } from '../../armatureOrganizer.js';
 import { logger } from '../../../lib/logger.js';
 import { buildRigSpecFromCmo3 } from './buildRigSpecFromCmo3.js';
 import { getBoneRole } from '../../../store/objectDataAccess.js';
+import { isRigidFollowWarpSpec } from './rigidFollowExtra.js';
 
 const FACE_PARALLAX_WARP_ID = 'FaceParallaxWarp';
 const BODY_WARP_IDS = new Set(['BodyWarpZ', 'BodyWarpY', 'BreathWarp', 'BodyXWarp']);
@@ -184,6 +185,9 @@ export function harvestSeedFromRigSpec(rigSpec, opts = {}) {
       neckWarpSpec = spec;
       continue;
     }
+    // Export-only root follow warps. Seeding them as per-part RigWarps
+    // would re-enable a BodyX-child lattice on extras the user disabled.
+    if (isRigidFollowWarpSpec(spec)) continue;
     if (typeof spec.targetPartId === 'string' && spec.targetPartId.length > 0) {
       // Tag-based subsystem flag — unknown tags pass through (untagged
       // parts never disable). When the subsystem is OFF, we keep the

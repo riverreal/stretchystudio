@@ -18,7 +18,10 @@
  *      GroupRotation actually exists in `rotationSpecs`.
  *   3. **Group rotation** — mesh's own group's rotation deformer when
  *      one exists.
- *   4. **Deepest body warp** (BodyXWarp / Breath / BodyWarpY/Z).
+ *   4. **Rigid-follow extra** (armature on, every lattice off) with no
+ *      dedicated `RigidFollow_*` warp → parent **-1** (root). Do **not**
+ *      fall through to BodyX — that is the Unity FFD-squash bug.
+ *   5. **Deepest body warp** (BodyXWarp / Breath / BodyWarpY/Z).
  *
  * Vertex keyform positions MUST use this same cascade. Encoding a
  * bone-weighted mesh as pivot-relative canvas-px while parenting it
@@ -35,6 +38,8 @@
  *
  * @module io/live2d/moc3/meshDeformerParent
  */
+
+import { isRigidFollowExtra } from '../rig/rigidFollowExtra.js';
 
 /**
  * @typedef {'rigWarp'|'rotation'|'bodyWarp'} MeshDeformerParentKind
@@ -137,7 +142,18 @@ export function resolveMeshDeformerParent(part, ctx) {
     };
   }
 
-  // 4. Deepest body warp (or -1 when the rig has no chain).
+  // 4. Rigid-follow extra without a dedicated warp: stay at root.
+  //    BodyX FFD is exactly what the editor's disabled lattices avoid.
+  if (isRigidFollowExtra(part)) {
+    return {
+      kind: 'bodyWarp',
+      deformerIndex: -1,
+      rigWarp: null,
+      rotationPivot: null,
+    };
+  }
+
+  // 5. Deepest body warp (or -1 when the rig has no chain).
   return {
     kind: 'bodyWarp',
     deformerIndex: meshDefaultDeformerIdx,

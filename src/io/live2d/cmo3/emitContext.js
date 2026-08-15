@@ -68,6 +68,10 @@ import { emptyRigSpec } from '../rig/rigSpec.js';
  * @property {any}      faceParallaxSpec
  * @property {any}      bodyWarpChain
  * @property {Map<string, any>|null} rigWarps
+ * @property {object|null} [project]
+ *   Full SS project when the caller has one (export). Used to detect
+ *   rigid-follow extras and sample the live body cage. Null during
+ *   Init Rig's heuristic generateCmo3.
  * @property {ResolvedConfigs} configs
  *
  * Accumulators — appended/mutated during emission.
@@ -184,6 +188,7 @@ export function createEmitContext(input, configs, hasGenerateRig) {
     faceParallaxSpec: input.faceParallaxSpec,
     bodyWarpChain: input.bodyWarpChain,
     rigWarps: input.rigWarps,
+    project: input.project ?? null,
     configs,
 
     perMesh: [],

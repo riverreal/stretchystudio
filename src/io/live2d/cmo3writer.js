@@ -44,6 +44,7 @@ import { createEmitContext, attachGlobals } from './cmo3/emitContext.js';
 import { emitAllMeshLayersAndKeyforms } from './cmo3/meshLayerKeyform.js';
 import { buildEyeContexts } from './cmo3/eyeContexts.js';
 import { emitPerPartRigWarps } from './cmo3/perPartRigWarps.js';
+import { emitRigidFollowWarps } from './cmo3/rigidFollowWarpEmit.js';
 import { emitArtMeshSources } from './cmo3/artMeshSourceEmit.js';
 
 // ---------- Main generator ----------
@@ -86,6 +87,8 @@ import { emitArtMeshSources } from './cmo3/artMeshSourceEmit.js';
  * @property {ParamInfo[]} [parameters=[]] - Parameters
  * @property {string} [modelName='StretchyStudio Export']
  * @property {boolean} [generateRig=false] - Add standard Live2D parameter IDs
+ * @property {object|null} [project] - Full SS project (export). Detects
+ *   rigid-follow extras and samples the body cage. Omit on Init Rig.
  */
 
 /**
@@ -182,6 +185,10 @@ export async function generateCmo3(input) {
     // (consumed by `moc3/meshBindingPlan.js` for moc3 keyform emission
     // — the bake output, vs this slice's source-of-bake field).
     eyeClosure = null,
+    // Full project (export path). Needed to detect rigid-follow extras
+    // and sample the body cage. Init Rig omits this so harvest never
+    // sees RigidFollow_* warps as seedable per-part lattices.
+    project = null,
   } = input;
 
   // Resolve Stage 5 configs to flat constants used inline below.
@@ -245,6 +252,7 @@ export async function generateCmo3(input) {
     maskConfigs, physicsRules,
     bakedKeyformAngles, autoRigConfig,
     faceParallaxSpec, bodyWarpChain, rigWarps,
+    project,
   }, {
     backdropTagsList: _BACKDROP_TAGS_LIST,
     eyeClosureTagsList: _EYE_CLOSURE_TAGS_LIST,
@@ -1027,6 +1035,15 @@ export async function generateCmo3(input) {
   const { eyeContexts, findEyeCtx } = buildEyeContexts({
     perMesh, meshes, generateRig,
     canvasToBodyXX, canvasToBodyXY, rigDebugLog,
+  });
+
+  // Rigid-follow extras first so meshWarpDeformerGuids is set before
+  // Section 3c — tagged extras (if any) then skip the BodyX RigWarp.
+  emitRigidFollowWarps(ctx, {
+    meshWarpDeformerGuids,
+    rigWarpBbox,
+    rootPart,
+    allDeformerSources,
   });
 
   emitPerPartRigWarps(ctx, {

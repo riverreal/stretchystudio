@@ -192,6 +192,7 @@ export async function exportLive2D(project, images, opts = {}) {
         faceParallaxSpec: faceParallaxSpecResolved,
         bodyWarpChain: bodyWarpChainResolved,
         rigWarps: rigWarpsResolved,
+        project,
       }));
     rigSpec = rigResult.rigSpec;
   } catch (err) {
@@ -597,6 +598,7 @@ export async function exportLive2DProject(project, images, opts = {}) {
       faceParallaxSpec: faceParallaxSpecResolved,
       bodyWarpChain: bodyWarpChainResolved,
       rigWarps: rigWarpsResolved,
+      project,
     }));
 
   // Build the parameter spec once — needed by both motionPresets

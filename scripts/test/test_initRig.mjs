@@ -226,6 +226,31 @@ function makeNeckWarpSpec() {
   assert(result.rigWarps.has('mesh-2'), 'mixed: mesh-2');
 }
 
+// ── RigidFollow_* warps are export-only — never seed as per-part RigWarps ──
+{
+  const follow = {
+    id: 'RigidFollow_objects',
+    name: 'objects Follow',
+    parent: { type: 'root', id: null },
+    targetPartId: 'objects',
+    canvasBbox: { minX: 0, minY: 0, W: 50, H: 50 },
+    gridSize: { rows: 1, cols: 1 },
+    rigidFollow: true,
+    bindings: [{ parameterId: 'ParamBodyAngleX', keys: [-10, 0, 10], interpolation: 'LINEAR' }],
+    keyforms: [
+      { keyTuple: [-10], positions: new Float64Array(8), opacity: 1 },
+      { keyTuple: [0], positions: new Float64Array(8), opacity: 1 },
+      { keyTuple: [10], positions: new Float64Array(8), opacity: 1 },
+    ],
+  };
+  const result = harvestSeedFromRigSpec({
+    warpDeformers: [makeRigWarp('mesh-1'), follow],
+  });
+  assertEq(result.rigWarps.size, 1, 'rigidFollow: not harvested as a per-part RigWarp');
+  assert(result.rigWarps.has('mesh-1'), 'rigidFollow: real RigWarp still harvested');
+  assert(!result.rigWarps.has('objects'), 'rigidFollow: extras stay lattice-free');
+}
+
 // ── tolerates malformed entries ──
 {
   const result = harvestSeedFromRigSpec({
