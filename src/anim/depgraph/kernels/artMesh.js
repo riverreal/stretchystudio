@@ -362,11 +362,20 @@ export function kernelArtMeshEval(op, ctx) {
     // composition (`renderer/bonePostChainComposition.js`).
   }
 
-  // Every lattice disabled (user wants a rigid extras/objects mesh):
-  // keyforms may still be warp-local 0..1. With no lift they draw as
-  // ~1px at the origin. Map through the leaf warp's REST chain so the
-  // part stays on-canvas without param-driven deformation.
-  if (!didCanvasFinalLift && !bufferLooksLikeCanvasPx(bufA, len)) {
+  // Every lattice disabled: extras/objects with an Armature still need
+  // to ride body angle / breath, but as a rigid body (no per-vertex
+  // FFD). Sample the live warp at the mesh centroid and apply that
+  // rotation+translation to every vert. Parts without Armature keep
+  // the older rest-lift / skip behaviour (test_depgraph_lattice).
+  const hasArmatureMod = stack.some((m) => m && m.type === 'armature' && isModifierEnabled(m, requiredMode));
+  if (!didCanvasFinalLift && hasArmatureMod) {
+    const followed = followDisabledWarpLeafRigid(stack, bufA, bufB, len, ctx);
+    if (followed) {
+      bufA = followed.bufA;
+      bufB = followed.bufB;
+      captureBbox(followed.label);
+    }
+  } else if (!didCanvasFinalLift && !bufferLooksLikeCanvasPx(bufA, len)) {
     const restLifted = restLiftDisabledWarpLeaf(stack, bufA, bufB, len, ctx);
     if (restLifted) {
       bufA = restLifted.bufA;
@@ -1016,4 +1025,120 @@ function restLiftDisabledWarpLeaf(stack, bufA, bufB, len, ctx) {
   if (!bbox) return null;
   convertWarpLocalToCanvasPx(bufA, len, bbox);
   return { bufA, bufB: bufB ?? new Float32Array(len), label: `disabled-leaf rest-bbox (deformerId=${deformerId})` };
+}
+
+/**
+ * Rigid-follow the animated body-warp chain after every lattice on this
+ * part was disabled. Rest-lifts leftover UVs to canvas, then applies
+ * the live-vs-rest warp as a single rotation+translation (no scale /
+ * shear) so held extras move with ParamBodyAngle* without squashing.
+ *
+ * @param {object[]} stack
+ * @param {Float32Array} bufA
+ * @param {Float32Array|null} bufB
+ * @param {number} len
+ * @param {import('../eval.js').EvalContext} ctx
+ * @returns {{bufA: Float32Array, bufB: Float32Array, label: string}|null}
+ */
+function followDisabledWarpLeafRigid(stack, bufA, bufB, len, ctx) {
+  let working = bufA;
+  let spare = bufB;
+  if (!bufferLooksLikeCanvasPx(working, len)) {
+    const rested = restLiftDisabledWarpLeaf(stack, working, spare, len, ctx);
+    if (!rested) return null;
+    working = rested.bufA;
+    spare = rested.bufB;
+  }
+
+  let leafIdx = -1;
+  for (let i = 0; i < stack.length; i++) {
+    const mod = stack[i];
+    if (mod && (mod.type === 'warp' || mod.type === 'lattice')) {
+      leafIdx = i;
+      break;
+    }
+  }
+  if (leafIdx < 0) return null;
+  const deformerId = modifierRefId(stack[leafIdx]);
+  if (typeof deformerId !== 'string' || deformerId.length === 0) return null;
+
+  const chainRest = [];
+  const chainLive = [];
+  for (let j = leafIdx + 1; j < stack.length; j++) {
+    const up = stack[j];
+    if (!up || (up.type !== 'warp' && up.type !== 'lattice')) continue;
+    const upId = modifierRefId(up);
+    if (typeof upId === 'string' && upId.length > 0) {
+      chainRest.push({ type: 'warp', id: upId, enabled: false });
+      chainLive.push({ type: 'warp', id: upId, enabled: true });
+    }
+  }
+
+  const restLift = computePerPartLift(deformerId, chainRest, ctx, false);
+  const liveLift = ctx.outputs.get(`${deformerId}/${NodeType.GEOMETRY}/${OperationCode.GRID_LIFT_TO_PARENT}`)
+    ?? computePerPartLift(deformerId, chainLive, ctx, true);
+  if (!restLift?.lifted || !liveLift?.lifted) return { bufA: working, bufB: spare ?? new Float32Array(len), label: 'disabled-leaf rigid-follow (no lift)' };
+
+  let cx = 0, cy = 0, nPts = 0;
+  for (let i = 0; i < len; i += 2) {
+    if (!Number.isFinite(working[i]) || !Number.isFinite(working[i + 1])) continue;
+    cx += working[i];
+    cy += working[i + 1];
+    nPts++;
+  }
+  if (nPts === 0) return { bufA: working, bufB: spare ?? new Float32Array(len), label: 'disabled-leaf rigid-follow (empty)' };
+  cx /= nPts;
+  cy /= nPts;
+
+  const bbox = resolveWarpRestBbox(deformerId, restLift, ctx);
+  if (!bbox) return { bufA: working, bufB: spare ?? new Float32Array(len), label: 'disabled-leaf rigid-follow (no bbox)' };
+  const bw = bbox.maxX - bbox.minX;
+  const bh = bbox.maxY - bbox.minY;
+  if (!(bw > 0) || !(bh > 0)) return { bufA: working, bufB: spare ?? new Float32Array(len), label: 'disabled-leaf rigid-follow (degen bbox)' };
+  const u0 = (cx - bbox.minX) / bw;
+  const v0 = (cy - bbox.minY) / bh;
+  const du = 0.05;
+
+  const r0 = liftWarpPoint(restLift, u0, v0);
+  const r1 = liftWarpPoint(restLift, u0 + du, v0);
+  const c0 = liftWarpPoint(liveLift, u0, v0);
+  const c1 = liftWarpPoint(liveLift, u0 + du, v0);
+  if (!r0 || !r1 || !c0 || !c1) return { bufA: working, bufB: spare ?? new Float32Array(len), label: 'disabled-leaf rigid-follow (sample fail)' };
+
+  const dRx = r1[0] - r0[0], dRy = r1[1] - r0[1];
+  const dCx = c1[0] - c0[0], dCy = c1[1] - c0[1];
+  const restLen = Math.hypot(dRx, dRy);
+  let cos = 1, sin = 0;
+  if (restLen > 1e-6) {
+    const theta = Math.atan2(dCy, dCx) - Math.atan2(dRy, dRx);
+    cos = Math.cos(theta);
+    sin = Math.sin(theta);
+  }
+
+  const out = spare && spare !== working ? spare : new Float32Array(len);
+  for (let i = 0; i < len; i += 2) {
+    const dx = working[i] - r0[0];
+    const dy = working[i + 1] - r0[1];
+    out[i] = c0[0] + dx * cos - dy * sin;
+    out[i + 1] = c0[1] + dx * sin + dy * cos;
+  }
+  return {
+    bufA: out,
+    bufB: working,
+    label: `disabled-leaf rigid-follow (deformerId=${deformerId})`,
+  };
+}
+
+/**
+ * @param {{lifted: ArrayLike<number>, gridSize: {rows:number, cols:number}, isQuad: boolean}} lift
+ * @param {number} u
+ * @param {number} v
+ * @returns {[number, number]|null}
+ */
+function liftWarpPoint(lift, u, v) {
+  const inn = new Float32Array([u, v]);
+  const out = new Float32Array(2);
+  evalWarpKernelCubism(lift.lifted, lift.gridSize, lift.isQuad, inn, out, 1);
+  if (!Number.isFinite(out[0]) || !Number.isFinite(out[1])) return null;
+  return [out[0], out[1]];
 }

@@ -829,6 +829,71 @@ import { _warpRestPositions } from '../../src/io/live2d/rig/selectRigSpec.js';
     'all-lattices-disabled kernel-only');
 }
 
+{
+  // Armature-bound extras with every lattice disabled must still RIDING
+  // the live body warp as a rigid body (Body Angle Z), not stay planted.
+  const project = {
+    canvas: { width: 800, height: 600 },
+    parameters: [{ id: 'ParamBodyAngleZ', min: -30, max: 30, defaultValue: 0 }],
+    nodes: [
+      {
+        id: 'BodyXWarp', type: 'deformer', deformerKind: 'warp',
+        name: 'BX', parent: null, visible: true,
+        gridSize: { rows: 1, cols: 1 },
+        baseGrid: [0, 0, 800, 0, 0, 600, 800, 600],
+        localFrame: 'canvas-px',
+        bindings: [{ parameterId: 'ParamBodyAngleZ', keys: [0, 30], interpolation: 'LINEAR' }],
+        keyforms: [
+          { keyTuple: [0], positions: [0, 0, 800, 0, 0, 600, 800, 600], opacity: 1 },
+          { keyTuple: [30], positions: [80, 0, 880, 0, 80, 600, 880, 600], opacity: 1 },
+        ],
+      },
+      {
+        id: 'torso', type: 'group', name: 'torso', boneRole: 'torso',
+        transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, pivotX: 400, pivotY: 300 },
+        pose: { rotation: 0, x: 0, y: 0, scaleX: 1, scaleY: 1 },
+      },
+      {
+        id: 'objects', type: 'part', name: 'objects',
+        modifiers: [
+          { type: 'lattice', objectId: 'BodyXWarp', enabled: false, mode: 3 },
+          { type: 'armature', deformerId: 'torso', enabled: true, mode: 3,
+            data: { jointBoneId: 'torso' } },
+        ],
+        mesh: {
+          vertices: [{ x: 200, y: 150 }, { x: 600, y: 150 }, { x: 400, y: 450 }],
+          triangles: [0, 1, 2],
+          uvs: [0.25, 0.25, 0.75, 0.25, 0.5, 0.75],
+          jointBoneId: 'torso',
+          boneWeights: [1, 1, 1],
+          runtime: {
+            bindings: [],
+            keyforms: [{
+              keyTuple: [],
+              vertexPositions: [200, 150, 600, 150, 400, 450],
+              opacity: 1,
+            }],
+          },
+        },
+      },
+    ],
+  };
+  const spec = selectRigSpec(project);
+  const at0 = evalProjectFrameViaDepgraph(project, { ParamBodyAngleZ: 0 }, { rigSpec: spec })
+    .find((f) => f.id === 'objects')?.vertexPositions;
+  const at30 = evalProjectFrameViaDepgraph(project, { ParamBodyAngleZ: 30 }, { rigSpec: spec })
+    .find((f) => f.id === 'objects')?.vertexPositions;
+  assert(!!at0 && !!at30, 'rigid-follow: eval produced objects frames');
+  const c0x = (at0[0] + at0[2] + at0[4]) / 3;
+  const c30x = (at30[0] + at30[2] + at30[4]) / 3;
+  assert(c30x - c0x > 40,
+    `rigid-follow: centroid follows BodyAngleZ shift (Δx=${(c30x - c0x).toFixed(1)}, expected ~80)`);
+  const edge0 = Math.hypot(at0[2] - at0[0], at0[3] - at0[1]);
+  const edge30 = Math.hypot(at30[2] - at30[0], at30[3] - at30[1]);
+  assert(Math.abs(edge30 - edge0) < 1e-2,
+    `rigid-follow: edge length preserved (rest ${edge0.toFixed(2)} posed ${edge30.toFixed(2)})`);
+}
+
 // ── Summary ──────────────────────────────────────────────────────
 
 console.log(`selectRigSpec: ${passed} passed, ${failed} failed`);
