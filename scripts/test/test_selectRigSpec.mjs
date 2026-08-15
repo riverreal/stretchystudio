@@ -15,6 +15,9 @@ import {
   synthesizeDeformerNodesFromSidetables,
 } from '../../src/store/deformerNodeSync.js';
 import { evalProjectFrameViaDepgraph } from '../../src/anim/depgraph/evalProjectFrame.js';
+import { buildDepGraph } from '../../src/anim/depgraph/build.js';
+import { OperationCode, NodeType } from '../../src/anim/depgraph/types.js';
+import { buildParamFCurve } from '../../src/anim/animationFCurve.js';
 
 let passed = 0;
 let failed = 0;
@@ -1106,6 +1109,88 @@ import { _warpRestPositions } from '../../src/io/live2d/rig/selectRigSpec.js';
   const edge30 = Math.hypot(at30[2] - at30[0], at30[3] - at30[1]);
   assert(Math.abs(edge30 - edge0) < 1e-2,
     `rotate rigid-follow: edge length preserved (rest ${edge0.toFixed(2)} posed ${edge30.toFixed(2)})`);
+}
+
+{
+  // Playback: param bag stays at 0; the ACTION fcurve drives BodyAngleZ.
+  // Disabled lattices must still wait on GRID_LIFT so rigid-follow
+  // samples the posed cage, not a missing lift.
+  const project = {
+    canvas: { width: 800, height: 600 },
+    parameters: [{ id: 'ParamBodyAngleZ', min: -30, max: 30, defaultValue: 0 }],
+    nodes: [
+      {
+        id: 'BodyXWarp', type: 'deformer', deformerKind: 'warp',
+        name: 'BX', parent: null, visible: true,
+        gridSize: { rows: 1, cols: 1 },
+        baseGrid: [0, 0, 800, 0, 0, 600, 800, 600],
+        localFrame: 'canvas-px',
+        bindings: [{ parameterId: 'ParamBodyAngleZ', keys: [0, 30], interpolation: 'LINEAR' }],
+        keyforms: [
+          { keyTuple: [0], positions: [0, 0, 800, 0, 0, 600, 800, 600], opacity: 1 },
+          { keyTuple: [30], positions: [80, 0, 880, 0, 80, 600, 880, 600], opacity: 1 },
+        ],
+      },
+      {
+        id: 'torso', type: 'group', name: 'torso', boneRole: 'torso',
+        transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, pivotX: 400, pivotY: 300 },
+        pose: { rotation: 0, x: 0, y: 0, scaleX: 1, scaleY: 1 },
+      },
+      {
+        id: 'objects', type: 'part', name: 'objects',
+        modifiers: [
+          { type: 'lattice', objectId: 'BodyXWarp', enabled: false, mode: 3 },
+          { type: 'armature', deformerId: 'torso', enabled: true, mode: 3,
+            data: { jointBoneId: 'torso' } },
+        ],
+        mesh: {
+          vertices: [{ x: 200, y: 150 }, { x: 600, y: 150 }, { x: 400, y: 450 }],
+          triangles: [0, 1, 2],
+          uvs: [0.25, 0.25, 0.75, 0.25, 0.5, 0.75],
+          jointBoneId: 'torso',
+          boneWeights: [1, 1, 1],
+          runtime: {
+            bindings: [],
+            keyforms: [{
+              keyTuple: [],
+              vertexPositions: [200, 150, 600, 150, 400, 450],
+              opacity: 1,
+            }],
+          },
+        },
+      },
+    ],
+  };
+  const action = {
+    id: 'idle',
+    fcurves: [buildParamFCurve('ParamBodyAngleZ', [
+      { time: 0, value: 0, easing: 'linear' },
+      { time: 1000, value: 30, easing: 'linear' },
+    ])],
+  };
+  const graph = buildDepGraph(project, { action });
+  const artOp = graph.findIdNode('objects', 'part')
+    ?.findComponent(NodeType.GEOMETRY)
+    ?.findOperation(OperationCode.ART_MESH_EVAL);
+  const liftOp = graph.findIdNode('BodyXWarp', 'deformer')
+    ?.findComponent(NodeType.GEOMETRY)
+    ?.findOperation(OperationCode.GRID_LIFT_TO_PARENT);
+  assert(!!artOp && !!liftOp, 'action rigid-follow: art mesh + lift ops exist');
+  assert(artOp.inlinks.some((r) => r.from === liftOp),
+    'action rigid-follow: disabled lattice still wires GRID_LIFT → ART_MESH');
+
+  const spec = selectRigSpec(project);
+  const at0 = evalProjectFrameViaDepgraph(project, { ParamBodyAngleZ: 0 }, {
+    rigSpec: spec, action, timeMs: 0,
+  }).find((f) => f.id === 'objects')?.vertexPositions;
+  const at1 = evalProjectFrameViaDepgraph(project, { ParamBodyAngleZ: 0 }, {
+    rigSpec: spec, action, timeMs: 1000,
+  }).find((f) => f.id === 'objects')?.vertexPositions;
+  assert(!!at0 && !!at1, 'action rigid-follow: eval produced objects frames');
+  const c0x = (at0[0] + at0[2] + at0[4]) / 3;
+  const c1x = (at1[0] + at1[2] + at1[4]) / 3;
+  assert(c1x - c0x > 40,
+    `action rigid-follow: centroid follows fcurve BodyAngleZ (Δx=${(c1x - c0x).toFixed(1)}, expected ~80)`);
 }
 
 // ── Summary ──────────────────────────────────────────────────────

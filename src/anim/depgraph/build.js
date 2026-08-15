@@ -44,6 +44,7 @@ import {
   isRotationDeformerNode,
   isChainDeformerNode,
   modifierRefId,
+  findInnermostBodyWarpId,
 } from '../../store/warpLatticeAccess.js';
 import { getMesh } from '../../store/objectDataAccess.js';
 import { gatherPhysicsRules } from '../../io/live2d/rig/physicsConfig.js';
@@ -471,11 +472,13 @@ function buildDeformerChainRelations(graph, project, opts) {
  * leaf-first (matches `Object.modifiers[]` array order — see
  * `synthesizeModifierStacks`).
  *
- * Modifier `enabled` flag IS honoured at relation-build time: a
- * disabled modifier doesn't contribute a relation, so the depgraph
- * topology shrinks. Mode-bitmask (REALTIME / RENDER) is checked at
- * eval time, not build time, because the same graph serves both
- * purposes — see `kernels/geometry.js` (Phase D-3a).
+ * Modifier `enabled` flag IS honoured for GEOMETRY_EVAL_DEFORMED: a
+ * disabled modifier doesn't deform, so that op's topology shrinks.
+ * ART_MESH_EVAL still depends on disabled warp/lattice lifts — extras
+ * rigid-follow those cages, and without the edge an action's fcurves
+ * delay the body warp while the part evaluates against a missing lift
+ * (planted mesh during idle playback). Mode-bitmask (REALTIME / RENDER)
+ * is checked at eval time, not build time — see `kernels/geometry.js`.
  *
  * Adapted from `build_object_data_geometry` — the modifier stack
  * iteration that wires each ModifierData's evaluate op to the
@@ -485,9 +488,14 @@ function buildPartModifierRelations(graph, project, opts) {
   // DEPGRAPH-BUILD-03 — index once. Used by the addBoneAndAncestors walk
   // below; pre-fix it scanned project.nodes per part × chain-depth.
   const nodesById = new Map();
+  const warpNodes = [];
+  const chainNodes = [];
   for (const n of project.nodes ?? []) {
     if (n?.id) nodesById.set(n.id, n);
+    if (isWarpLatticeNode(n)) warpNodes.push(n);
+    if (isChainDeformerNode(n)) chainNodes.push(n);
   }
+  const innermostBodyWarpId = findInnermostBodyWarpId(warpNodes, chainNodes);
   for (const part of project.nodes ?? []) {
     if (!part || part.type !== 'part') continue;
     const partId = graph.findIdNode(part.id, 'part');
@@ -496,11 +504,19 @@ function buildPartModifierRelations(graph, project, opts) {
     const artMeshOp = partGeom?.findOperation(OperationCode.ART_MESH_EVAL);
     if (!evalOp && !artMeshOp) continue;
     const stack = Array.isArray(part.modifiers) ? part.modifiers : [];
+    let wiredWarpLift = false;
+    let hasArmature = false;
     for (const mod of stack) {
+      if (mod && mod.type === 'armature' && mod.enabled !== false) hasArmature = true;
       // v43 — a warp modifier references its cage object via `objectId`; a
       // rotation modifier references its deformer node via `deformerId`.
       const refId = modifierRefId(mod);
-      if (!refId || mod.enabled === false) continue;
+      if (!refId) continue;
+      const isWarpMod = mod.type === 'warp' || mod.type === 'lattice';
+      const disabled = mod.enabled === false;
+      // Disabled rotations stay excluded. Disabled warps still feed
+      // ART_MESH rigid-follow (not GEOMETRY_EVAL_DEFORMED).
+      if (disabled && !isWarpMod) continue;
       const defId = graph.findIdNode(refId, 'deformer');
       const defGeom = defId?.findComponent(NodeType.GEOMETRY);
       if (!defGeom) continue;
@@ -508,11 +524,14 @@ function buildPartModifierRelations(graph, project, opts) {
         ? defGeom.findOperation(OperationCode.MATRIX_BUILD)
         : defGeom.findOperation(OperationCode.GRID_LIFT_TO_PARENT);
       if (defOp) {
-        if (evalOp) {
+        if (!disabled && evalOp) {
           graph.addRelation(defOp, evalOp, `modifier ${refId} -> part`);
         }
         if (artMeshOp) {
-          graph.addRelation(defOp, artMeshOp, `modifier ${refId} -> art mesh`);
+          graph.addRelation(defOp, artMeshOp, disabled
+            ? `disabled modifier ${refId} -> art mesh`
+            : `modifier ${refId} -> art mesh`);
+          if (isWarpMod) wiredWarpLift = true;
         }
       }
       // Phase 0.D.0 — ART_MESH_EVAL also reads KEYFORM_EVAL when the
@@ -523,6 +542,16 @@ function buildPartModifierRelations(graph, project, opts) {
         if (keyOp) {
           graph.addRelation(keyOp, artMeshOp, `modifier ${refId} keyform -> art mesh`);
         }
+      }
+    }
+    // Armature-only extras (no lattice rows left) still rigid-follow
+    // the project's innermost body warp.
+    if (artMeshOp && hasArmature && !wiredWarpLift && innermostBodyWarpId) {
+      const bodyGeom = graph.findIdNode(innermostBodyWarpId, 'deformer')
+        ?.findComponent(NodeType.GEOMETRY);
+      const bodyLift = bodyGeom?.findOperation(OperationCode.GRID_LIFT_TO_PARENT);
+      if (bodyLift) {
+        graph.addRelation(bodyLift, artMeshOp, `body warp ${innermostBodyWarpId} -> art mesh`);
       }
     }
     // Phase 0.D.0 — every PARAM_EVAL feeds ART_MESH_EVAL via the
