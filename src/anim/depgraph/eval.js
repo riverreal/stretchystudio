@@ -155,6 +155,10 @@ const KERNELS = {
  *   0..1 before `evalWarpKernelCubism` (which treats inputs as UVs).
  *   Without it, canvas-px verts (u=496) hit Cubism far-field and the
  *   part renders at ~100000px ("objects disappeared").
+ * @property {string|null} [innermostBodyWarpId] - BodyX (or deepest body
+ *   warp) id from selectRigSpec. ART_MESH_EVAL rigid-follow uses this
+ *   so armature-bound extras ride ParamBodyAngle* even when that lattice
+ *   row is no longer on the part.
  * @property {Set<string>} [artMeshBboxTrace] - I-20 (rigInvariantCheck)
  *   opt-in: when populated, `kernelArtMeshEval` captures per-step bbox
  *   for parts whose id is in the set. Used by the framework to re-eval
@@ -187,6 +191,7 @@ export function evalDepGraph(graph, ctxIn) {
     poseOverrides: ctxIn.poseOverrides ?? new Map(),
     rigArtMeshById: ctxIn.rigArtMeshById ?? null,
     warpRestBboxById: ctxIn.warpRestBboxById ?? null,
+    innermostBodyWarpId: ctxIn.innermostBodyWarpId ?? null,
     boneMirrorByParam: ctxIn.boneMirrorByParam ?? null,
     artMeshBboxTrace: ctxIn.artMeshBboxTrace,
   };

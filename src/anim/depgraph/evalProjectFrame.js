@@ -144,6 +144,9 @@ export function evalProjectFrameViaDepgraph(project, paramValues, opts = {}) {
     requiredMode: opts.requiredMode,
     rigArtMeshById: buildRigArtMeshIndex(opts.rigSpec),
     warpRestBboxById: buildWarpRestBboxIndex(opts.rigSpec),
+    innermostBodyWarpId: typeof opts.rigSpec?.innermostBodyWarpId === 'string'
+      ? opts.rigSpec.innermostBodyWarpId
+      : null,
     poseOverrides: buildPoseOverrideIndex(opts.poseOverrides),
     // Bone-mirror priority gate (RULE №4 — bone is canonical, param is the
     // legacy slot). When an action carries BOTH a procedural

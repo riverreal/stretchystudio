@@ -894,6 +894,220 @@ import { _warpRestPositions } from '../../src/io/live2d/rig/selectRigSpec.js';
     `rigid-follow: edge length preserved (rest ${edge0.toFixed(2)} posed ${edge30.toFixed(2)})`);
 }
 
+{
+  // Production shape: Body Angle Z lives on the OUTER BodyZ warp.
+  // BodyX (the leaf objects bind to) is an identity 0..1 cage. Rigid
+  // follow must compose through the animated parent, not sample BodyX
+  // at rest and conclude "nothing moved".
+  const project = {
+    canvas: { width: 800, height: 600 },
+    parameters: [{ id: 'ParamBodyAngleZ', min: -30, max: 30, defaultValue: 0 }],
+    nodes: [
+      {
+        id: 'BodyZWarp', type: 'deformer', deformerKind: 'warp',
+        name: 'BZ', parent: null, visible: true,
+        gridSize: { rows: 1, cols: 1 },
+        baseGrid: [0, 0, 800, 0, 0, 600, 800, 600],
+        localFrame: 'canvas-px',
+        bindings: [{ parameterId: 'ParamBodyAngleZ', keys: [0, 30], interpolation: 'LINEAR' }],
+        keyforms: [
+          { keyTuple: [0], positions: [0, 0, 800, 0, 0, 600, 800, 600], opacity: 1 },
+          { keyTuple: [30], positions: [80, 0, 880, 0, 80, 600, 880, 600], opacity: 1 },
+        ],
+      },
+      {
+        id: 'BodyXWarp', type: 'deformer', deformerKind: 'warp',
+        name: 'BX', parent: 'BodyZWarp', visible: true,
+        gridSize: { rows: 1, cols: 1 },
+        baseGrid: [0, 0, 1, 0, 0, 1, 1, 1],
+        localFrame: 'normalized-0to1',
+        bindings: [],
+        keyforms: [{ keyTuple: [], positions: [0, 0, 1, 0, 0, 1, 1, 1], opacity: 1 }],
+      },
+      {
+        id: 'torso', type: 'group', name: 'torso', boneRole: 'torso',
+        transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, pivotX: 400, pivotY: 300 },
+        pose: { rotation: 0, x: 0, y: 0, scaleX: 1, scaleY: 1 },
+      },
+      {
+        id: 'objects', type: 'part', name: 'objects',
+        modifiers: [
+          { type: 'lattice', objectId: 'BodyXWarp', enabled: false, mode: 3 },
+          { type: 'lattice', objectId: 'BodyZWarp', enabled: false, mode: 3 },
+          { type: 'armature', deformerId: 'torso', enabled: true, mode: 3,
+            data: { jointBoneId: 'torso' } },
+        ],
+        mesh: {
+          vertices: [{ x: 200, y: 150 }, { x: 600, y: 150 }, { x: 400, y: 450 }],
+          triangles: [0, 1, 2],
+          uvs: [0.25, 0.25, 0.75, 0.25, 0.5, 0.75],
+          jointBoneId: 'torso',
+          boneWeights: [1, 1, 1],
+          runtime: {
+            bindings: [],
+            keyforms: [{
+              keyTuple: [],
+              vertexPositions: [200, 150, 600, 150, 400, 450],
+              opacity: 1,
+            }],
+          },
+        },
+      },
+    ],
+  };
+  const spec = selectRigSpec(project);
+  const at0 = evalProjectFrameViaDepgraph(project, { ParamBodyAngleZ: 0 }, { rigSpec: spec })
+    .find((f) => f.id === 'objects')?.vertexPositions;
+  const at30 = evalProjectFrameViaDepgraph(project, { ParamBodyAngleZ: 30 }, { rigSpec: spec })
+    .find((f) => f.id === 'objects')?.vertexPositions;
+  assert(!!at0 && !!at30, 'nested rigid-follow: eval produced objects frames');
+  const c0x = (at0[0] + at0[2] + at0[4]) / 3;
+  const c30x = (at30[0] + at30[2] + at30[4]) / 3;
+  assert(c30x - c0x > 40,
+    `nested rigid-follow: centroid follows outer BodyAngleZ (Δx=${(c30x - c0x).toFixed(1)}, expected ~80)`);
+}
+
+{
+  // Production miss: objects kept Armature but the stack never listed
+  // BodyZ (or Init Rig left only the BodyX leaf). Follow must still
+  // compose through the project parent pointer / innermostBodyWarpId.
+  const project = {
+    canvas: { width: 800, height: 600 },
+    parameters: [{ id: 'ParamBodyAngleZ', min: -30, max: 30, defaultValue: 0 }],
+    nodes: [
+      {
+        id: 'BodyZWarp', type: 'deformer', deformerKind: 'warp',
+        name: 'BZ', parent: null, visible: true,
+        gridSize: { rows: 1, cols: 1 },
+        baseGrid: [0, 0, 800, 0, 0, 600, 800, 600],
+        localFrame: 'canvas-px',
+        bindings: [{ parameterId: 'ParamBodyAngleZ', keys: [0, 30], interpolation: 'LINEAR' }],
+        keyforms: [
+          { keyTuple: [0], positions: [0, 0, 800, 0, 0, 600, 800, 600], opacity: 1 },
+          { keyTuple: [30], positions: [80, 0, 880, 0, 80, 600, 880, 600], opacity: 1 },
+        ],
+      },
+      {
+        id: 'BodyXWarp', type: 'deformer', deformerKind: 'warp',
+        name: 'BX', parent: 'BodyZWarp', visible: true,
+        gridSize: { rows: 1, cols: 1 },
+        baseGrid: [0, 0, 1, 0, 0, 1, 1, 1],
+        localFrame: 'normalized-0to1',
+        bindings: [],
+        keyforms: [{ keyTuple: [], positions: [0, 0, 1, 0, 0, 1, 1, 1], opacity: 1 }],
+      },
+      {
+        id: 'torso', type: 'group', name: 'torso', boneRole: 'torso',
+        transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, pivotX: 400, pivotY: 300 },
+        pose: { rotation: 0, x: 0, y: 0, scaleX: 1, scaleY: 1 },
+      },
+      {
+        id: 'objects', type: 'part', name: 'objects',
+        modifiers: [
+          { type: 'armature', deformerId: 'torso', enabled: true, mode: 3,
+            data: { jointBoneId: 'torso' } },
+        ],
+        mesh: {
+          vertices: [{ x: 200, y: 150 }, { x: 600, y: 150 }, { x: 400, y: 450 }],
+          triangles: [0, 1, 2],
+          uvs: [0.25, 0.25, 0.75, 0.25, 0.5, 0.75],
+          jointBoneId: 'torso',
+          boneWeights: [1, 1, 1],
+          runtime: {
+            bindings: [],
+            keyforms: [{
+              keyTuple: [],
+              vertexPositions: [200, 150, 600, 150, 400, 450],
+              opacity: 1,
+            }],
+          },
+        },
+      },
+    ],
+  };
+  const spec = selectRigSpec(project);
+  assert(spec.innermostBodyWarpId === 'BodyXWarp',
+    `armature-only rigid-follow: innermostBodyWarpId is BodyX (got ${spec.innermostBodyWarpId})`);
+  const at0 = evalProjectFrameViaDepgraph(project, { ParamBodyAngleZ: 0 }, { rigSpec: spec })
+    .find((f) => f.id === 'objects')?.vertexPositions;
+  const at30 = evalProjectFrameViaDepgraph(project, { ParamBodyAngleZ: 30 }, { rigSpec: spec })
+    .find((f) => f.id === 'objects')?.vertexPositions;
+  assert(!!at0 && !!at30, 'armature-only rigid-follow: eval produced objects frames');
+  const c0x = (at0[0] + at0[2] + at0[4]) / 3;
+  const c30x = (at30[0] + at30[2] + at30[4]) / 3;
+  assert(c30x - c0x > 40,
+    `armature-only rigid-follow: centroid follows BodyAngleZ (Δx=${(c30x - c0x).toFixed(1)}, expected ~80)`);
+}
+
+{
+  // Body Angle Z is a rotation of the outer cage, not a translation.
+  // Kabsch on the whole grid must swing the extras around the body.
+  const project = {
+    canvas: { width: 800, height: 600 },
+    parameters: [{ id: 'ParamBodyAngleZ', min: -30, max: 30, defaultValue: 0 }],
+    nodes: [
+      {
+        id: 'BodyZWarp', type: 'deformer', deformerKind: 'warp',
+        name: 'BZ', parent: null, visible: true,
+        gridSize: { rows: 1, cols: 1 },
+        baseGrid: [0, 0, 800, 0, 0, 600, 800, 600],
+        localFrame: 'canvas-px',
+        bindings: [{ parameterId: 'ParamBodyAngleZ', keys: [0, 30], interpolation: 'LINEAR' }],
+        keyforms: [
+          { keyTuple: [0], positions: [0, 0, 800, 0, 0, 600, 800, 600], opacity: 1 },
+          // 90° about canvas center (400, 300): (0,0)→(700,−100), etc.
+          { keyTuple: [30], positions: [700, -100, 700, 700, -100, -100, -100, 700], opacity: 1 },
+        ],
+      },
+      {
+        id: 'torso', type: 'group', name: 'torso', boneRole: 'torso',
+        transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, pivotX: 400, pivotY: 300 },
+        pose: { rotation: 0, x: 0, y: 0, scaleX: 1, scaleY: 1 },
+      },
+      {
+        id: 'objects', type: 'part', name: 'objects',
+        modifiers: [
+          { type: 'lattice', objectId: 'BodyZWarp', enabled: false, mode: 3 },
+          { type: 'armature', deformerId: 'torso', enabled: true, mode: 3,
+            data: { jointBoneId: 'torso' } },
+        ],
+        mesh: {
+          vertices: [{ x: 350, y: 80 }, { x: 450, y: 80 }, { x: 400, y: 160 }],
+          triangles: [0, 1, 2],
+          uvs: [0.4, 0.1, 0.6, 0.1, 0.5, 0.2],
+          jointBoneId: 'torso',
+          boneWeights: [1, 1, 1],
+          runtime: {
+            bindings: [],
+            keyforms: [{
+              keyTuple: [],
+              vertexPositions: [350, 80, 450, 80, 400, 160],
+              opacity: 1,
+            }],
+          },
+        },
+      },
+    ],
+  };
+  const spec = selectRigSpec(project);
+  const at0 = evalProjectFrameViaDepgraph(project, { ParamBodyAngleZ: 0 }, { rigSpec: spec })
+    .find((f) => f.id === 'objects')?.vertexPositions;
+  const at30 = evalProjectFrameViaDepgraph(project, { ParamBodyAngleZ: 30 }, { rigSpec: spec })
+    .find((f) => f.id === 'objects')?.vertexPositions;
+  assert(!!at0 && !!at30, 'rotate rigid-follow: eval produced objects frames');
+  const c0x = (at0[0] + at0[2] + at0[4]) / 3;
+  const c0y = (at0[1] + at0[3] + at0[5]) / 3;
+  const c30x = (at30[0] + at30[2] + at30[4]) / 3;
+  const c30y = (at30[1] + at30[3] + at30[5]) / 3;
+  const moved = Math.hypot(c30x - c0x, c30y - c0y);
+  assert(moved > 100,
+    `rotate rigid-follow: centroid swings with BodyAngleZ (Δ=${moved.toFixed(1)})`);
+  const edge0 = Math.hypot(at0[2] - at0[0], at0[3] - at0[1]);
+  const edge30 = Math.hypot(at30[2] - at30[0], at30[3] - at30[1]);
+  assert(Math.abs(edge30 - edge0) < 1e-2,
+    `rotate rigid-follow: edge length preserved (rest ${edge0.toFixed(2)} posed ${edge30.toFixed(2)})`);
+}
+
 // ── Summary ──────────────────────────────────────────────────────
 
 console.log(`selectRigSpec: ${passed} passed, ${failed} failed`);

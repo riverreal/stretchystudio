@@ -1391,6 +1391,8 @@ export default function CanvasViewport({
           // next param change.
           if (cache.rigSpec === _rigSpec && cache.paramValues === valuesForEval && cache.frames !== null
               && cache.poseOverrides === poseOverrides
+              && cache.timeMs === anim.currentTime
+              && cache.action === activeAction
               && (!_wantLifted || cache.liftedGrids)) {
             frames = cache.frames;
             if (_wantLifted && cache.liftedGrids) {
@@ -1428,6 +1430,8 @@ export default function CanvasViewport({
               rigSpec: _rigSpec, paramValues: valuesForEval, frames,
               liftedGrids: evalOut?.liftedGrids ?? null,
               poseOverrides,
+              timeMs: anim.currentTime,
+              action: activeAction,
             };
             // Publish to rigEvalStore so WarpDeformerOverlay sees the
             // current-frame lattice positions for every warp (including

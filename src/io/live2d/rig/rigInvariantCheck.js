@@ -251,7 +251,13 @@ function _evalCtxExtras(project) {
       warpRestBboxById.set(id, bb);
     }
   }
-  return { rigArtMeshById, warpRestBboxById };
+  return {
+    rigArtMeshById,
+    warpRestBboxById,
+    innermostBodyWarpId: typeof rigSpec.innermostBodyWarpId === 'string'
+      ? rigSpec.innermostBodyWarpId
+      : null,
+  };
 }
 
 /**

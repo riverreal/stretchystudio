@@ -65,6 +65,8 @@ import { logger } from '../../../lib/logger.js';
 import {
   modifierRefId,
   getWarpRestGrid,
+  isWarpLatticeNode,
+  isRotationDeformerNode,
 } from '../../../store/warpLatticeAccess.js';
 import { isModifierEnabled, MODIFIER_MODE_REALTIME } from '../../modifierTypeInfo.js';
 import { buildCanvasFinalMat3 } from './matrix.js';
@@ -367,7 +369,10 @@ export function kernelArtMeshEval(op, ctx) {
   // FFD). Sample the live warp at the mesh centroid and apply that
   // rotation+translation to every vert. Parts without Armature keep
   // the older rest-lift / skip behaviour (test_depgraph_lattice).
-  const hasArmatureMod = stack.some((m) => m && m.type === 'armature' && isModifierEnabled(m, requiredMode));
+  // Armature row present (✓) is enough — the eye bit only hides LBS,
+  // not "this extra should ride the body". Required-mode false here
+  // used to skip follow entirely and leave objects planted.
+  const hasArmatureMod = stack.some((m) => m && m.type === 'armature' && m.enabled !== false);
   if (!didCanvasFinalLift && hasArmatureMod) {
     const followed = followDisabledWarpLeafRigid(stack, bufA, bufB, len, ctx);
     if (followed) {
@@ -1050,34 +1055,34 @@ function followDisabledWarpLeafRigid(stack, bufA, bufB, len, ctx) {
     spare = rested.bufB;
   }
 
-  let leafIdx = -1;
-  for (let i = 0; i < stack.length; i++) {
-    const mod = stack[i];
-    if (mod && (mod.type === 'warp' || mod.type === 'lattice')) {
-      leafIdx = i;
-      break;
-    }
-  }
-  if (leafIdx < 0) return null;
-  const deformerId = modifierRefId(stack[leafIdx]);
-  if (typeof deformerId !== 'string' || deformerId.length === 0) return null;
+  const deformerId = resolveRigidFollowWarpId(stack, ctx);
+  if (!deformerId) return null;
 
-  const chainRest = [];
-  const chainLive = [];
-  for (let j = leafIdx + 1; j < stack.length; j++) {
-    const up = stack[j];
-    if (!up || (up.type !== 'warp' && up.type !== 'lattice')) continue;
-    const upId = modifierRefId(up);
-    if (typeof upId === 'string' && upId.length > 0) {
-      chainRest.push({ type: 'warp', id: upId, enabled: false });
-      chainLive.push({ type: 'warp', id: upId, enabled: true });
-    }
-  }
+  // Compose through the deformer's PROJECT parents, not only the rows
+  // still on this part. A stack that is Armature-only (or BodyX without
+  // BodyZ) used to sample an unlifted 0..1 cage and plant the mesh.
+  const globalChain = warpParentChainFromProject(deformerId, ctx);
+  const chainRest = globalChain.map((c) => ({ ...c, enabled: false }));
+  const chainLive = globalChain.map((c) => ({ ...c, enabled: true }));
 
   const restLift = computePerPartLift(deformerId, chainRest, ctx, false);
   const liveLift = ctx.outputs.get(`${deformerId}/${NodeType.GEOMETRY}/${OperationCode.GRID_LIFT_TO_PARENT}`)
     ?? computePerPartLift(deformerId, chainLive, ctx, true);
-  if (!restLift?.lifted || !liveLift?.lifted) return { bufA: working, bufB: spare ?? new Float32Array(len), label: 'disabled-leaf rigid-follow (no lift)' };
+  if (!restLift?.lifted || !liveLift?.lifted) {
+    return { bufA: working, bufB: spare ?? new Float32Array(len), label: 'disabled-leaf rigid-follow (no lift)' };
+  }
+
+  const out = spare && spare !== working ? spare : new Float32Array(len);
+
+  // Prefer a rigid fit of the whole live-vs-rest cage. Survives nested
+  // 0..1 BodyX, objects outside the cage, and Body Angle Z rotation.
+  if (isCanvasPxBbox(bboxOfPairs(restLift.lifted)) && isCanvasPxBbox(bboxOfPairs(liveLift.lifted))) {
+    const xf = rigidTransformFromGrids(restLift.lifted, liveLift.lifted);
+    if (xf) {
+      applyRigidToBuffer(working, out, len, xf);
+      return { bufA: out, bufB: working, label: `disabled-leaf rigid-follow (deformerId=${deformerId})` };
+    }
+  }
 
   let cx = 0, cy = 0, nPts = 0;
   for (let i = 0; i < len; i += 2) {
@@ -1090,7 +1095,8 @@ function followDisabledWarpLeafRigid(stack, bufA, bufB, len, ctx) {
   cx /= nPts;
   cy /= nPts;
 
-  const bbox = resolveWarpRestBbox(deformerId, restLift, ctx);
+  const bbox = resolveWarpRestBbox(deformerId, restLift, ctx)
+    ?? (isCanvasPxBbox(bboxOfPairs(liveLift.lifted)) ? bboxOfPairs(liveLift.lifted) : null);
   if (!bbox) return { bufA: working, bufB: spare ?? new Float32Array(len), label: 'disabled-leaf rigid-follow (no bbox)' };
   const bw = bbox.maxX - bbox.minX;
   const bh = bbox.maxY - bbox.minY;
@@ -1099,8 +1105,9 @@ function followDisabledWarpLeafRigid(stack, bufA, bufB, len, ctx) {
   const v0 = (cy - bbox.minY) / bh;
   const du = 0.05;
 
-  const r0 = liftWarpPoint(restLift, u0, v0);
-  const r1 = liftWarpPoint(restLift, u0 + du, v0);
+  const restIsCanvas = isCanvasPxBbox(bboxOfPairs(restLift.lifted));
+  const r0 = restIsCanvas ? liftWarpPoint(restLift, u0, v0) : [cx, cy];
+  const r1 = restIsCanvas ? liftWarpPoint(restLift, u0 + du, v0) : [cx + 1, cy];
   const c0 = liftWarpPoint(liveLift, u0, v0);
   const c1 = liftWarpPoint(liveLift, u0 + du, v0);
   if (!r0 || !r1 || !c0 || !c1) return { bufA: working, bufB: spare ?? new Float32Array(len), label: 'disabled-leaf rigid-follow (sample fail)' };
@@ -1115,7 +1122,6 @@ function followDisabledWarpLeafRigid(stack, bufA, bufB, len, ctx) {
     sin = Math.sin(theta);
   }
 
-  const out = spare && spare !== working ? spare : new Float32Array(len);
   for (let i = 0; i < len; i += 2) {
     const dx = working[i] - r0[0];
     const dy = working[i + 1] - r0[1];
@@ -1127,6 +1133,120 @@ function followDisabledWarpLeafRigid(stack, bufA, bufB, len, ctx) {
     bufB: working,
     label: `disabled-leaf rigid-follow (deformerId=${deformerId})`,
   };
+}
+
+/**
+ * Body-warp id to rigid-follow. Prefers the project's innermost body
+ * warp (BodyX) even when that row is no longer on the part — extras
+ * that only kept Armature still ride ParamBodyAngle*.
+ *
+ * @param {object[]} stack
+ * @param {import('../eval.js').EvalContext} ctx
+ * @returns {string|null}
+ */
+function resolveRigidFollowWarpId(stack, ctx) {
+  const stackIds = [];
+  for (const m of stack) {
+    if (!m || (m.type !== 'warp' && m.type !== 'lattice')) continue;
+    const id = modifierRefId(m);
+    if (typeof id === 'string' && id.length > 0) stackIds.push(id);
+  }
+  const prefer = ctx.innermostBodyWarpId;
+  if (typeof prefer === 'string' && prefer.length > 0) {
+    const lift = ctx.outputs.get(`${prefer}/${NodeType.GEOMETRY}/${OperationCode.GRID_LIFT_TO_PARENT}`);
+    if (stackIds.includes(prefer) || lift?.lifted) return prefer;
+  }
+  const bodyX = stackIds.find((id) => /bodyx/i.test(id));
+  if (bodyX) return bodyX;
+  const bodyZ = [...stackIds].reverse().find((id) => /bodyz/i.test(id));
+  if (bodyZ) return bodyZ;
+  if (stackIds.length > 0) return stackIds[0];
+  return typeof prefer === 'string' && prefer.length > 0 ? prefer : null;
+}
+
+/**
+ * Leaf-first ancestor chain from `project.nodes` parent pointers.
+ *
+ * @param {string} warpId
+ * @param {import('../eval.js').EvalContext} ctx
+ * @returns {Array<{type:string, id:string, enabled:boolean}>}
+ */
+function warpParentChainFromProject(warpId, ctx) {
+  const byId = ctx._artMeshByIdCache;
+  const chain = [];
+  let node = byId?.get(warpId);
+  let parentId = typeof node?.parent === 'string' ? node.parent : null;
+  let safety = 16;
+  while (parentId && safety-- > 0) {
+    const parent = byId?.get(parentId);
+    if (!parent) break;
+    if (isWarpLatticeNode(parent)) {
+      chain.push({ type: 'warp', id: parent.id, enabled: true });
+    } else if (isRotationDeformerNode(parent)) {
+      chain.push({ type: 'rotation', id: parent.id, enabled: true });
+    } else {
+      break;
+    }
+    parentId = typeof parent.parent === 'string' ? parent.parent : null;
+  }
+  return chain;
+}
+
+/**
+ * 2D Kabsch (rotation + translation, no scale) mapping rest CPs → live.
+ *
+ * @param {ArrayLike<number>} rest
+ * @param {ArrayLike<number>} live
+ * @returns {{rx:number, ry:number, lx:number, ly:number, cos:number, sin:number}|null}
+ */
+function rigidTransformFromGrids(rest, live) {
+  const n = Math.min(rest.length, live.length) >> 1;
+  if (n < 2) return null;
+  let rx = 0, ry = 0, lx = 0, ly = 0;
+  for (let i = 0; i < n; i++) {
+    rx += rest[i * 2];
+    ry += rest[i * 2 + 1];
+    lx += live[i * 2];
+    ly += live[i * 2 + 1];
+  }
+  rx /= n;
+  ry /= n;
+  lx /= n;
+  ly /= n;
+  let Sxx = 0, Sxy = 0, Syx = 0, Syy = 0;
+  for (let i = 0; i < n; i++) {
+    const rxi = rest[i * 2] - rx;
+    const ryi = rest[i * 2 + 1] - ry;
+    const lxi = live[i * 2] - lx;
+    const lyi = live[i * 2 + 1] - ly;
+    Sxx += rxi * lxi;
+    Sxy += rxi * lyi;
+    Syx += ryi * lxi;
+    Syy += ryi * lyi;
+  }
+  const a = Sxx + Syy;
+  const b = Syx - Sxy;
+  const mag = Math.hypot(a, b);
+  return {
+    rx, ry, lx, ly,
+    cos: mag > 1e-8 ? a / mag : 1,
+    sin: mag > 1e-8 ? b / mag : 0,
+  };
+}
+
+/**
+ * @param {Float32Array} working
+ * @param {Float32Array} out
+ * @param {number} len
+ * @param {{rx:number, ry:number, lx:number, ly:number, cos:number, sin:number}} xf
+ */
+function applyRigidToBuffer(working, out, len, xf) {
+  for (let i = 0; i < len; i += 2) {
+    const dx = working[i] - xf.rx;
+    const dy = working[i + 1] - xf.ry;
+    out[i] = xf.lx + dx * xf.cos - dy * xf.sin;
+    out[i + 1] = xf.ly + dx * xf.sin + dy * xf.cos;
+  }
 }
 
 /**
