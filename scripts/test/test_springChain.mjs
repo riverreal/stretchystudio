@@ -13,6 +13,7 @@ import {
   applyCinematicFollow,
   cartesianKeyTuples,
   findSpringChain,
+  recoverSpringChains,
   removeSpringChain,
   reseedSpringChains,
   setSpringChainCinematic,
@@ -386,6 +387,29 @@ expect('v52 migration seeds springChains and bumps schema', () => {
   assert.equal(project.schemaVersion, CURRENT_SCHEMA_VERSION);
   assert.ok(Array.isArray(project.springChains));
   assert.equal(project.springChains.length, 0);
+});
+
+expect('recoverSpringChains rebuilds a wiped sidetable from modifiers', () => {
+  const project = makeHairProject();
+  addSpringChain(project, 'part_hair', { jointCount: 3, axis: 'topDown', lag: 1, cinematic: 1.5 });
+  project.springChains = [];
+  const n = recoverSpringChains(project);
+  assert.equal(n, 1);
+  const chain = findSpringChain(project, 'part_hair');
+  assert.ok(chain, 'recovered chain');
+  assert.equal(chain.jointCount, 3);
+  assert.equal(chain.paramIds.length, 3);
+  assert.equal(chain.physicsRuleId, springChainRuleId('part_hair'));
+});
+
+expect('v53 migration recovers springChains from modifiers', () => {
+  const project = makeHairProject();
+  addSpringChain(project, 'part_hair', { jointCount: 2 });
+  project.springChains = [];
+  project.schemaVersion = 52;
+  migrateProject(project);
+  assert.equal(project.schemaVersion, CURRENT_SCHEMA_VERSION);
+  assert.equal(findSpringChain(project, 'part_hair')?.jointCount, 2);
 });
 
 console.log(`springChain: ${passed} passed, ${failed} failed`);

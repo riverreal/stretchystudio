@@ -158,6 +158,16 @@ function makeFixtureProject() {
       'face-mesh-id':       { vertexCount: 60, triCount: 80, uvHash: 987654321 },
     },
     lastInitRigCompletedAt: '2026-05-01T18:00:00.000Z',
+    springChains: [{
+      partId: 'g1',
+      jointCount: 2,
+      axis: 'auto',
+      lag: 0.85,
+      cinematic: 0.85,
+      paramIds: ['ParamSpring_g1_0', 'ParamSpring_g1_1'],
+      physicsRuleId: 'PhysicsSetting_SpringChain_g1',
+      _userAuthored: true,
+    }],
     // V3 Re-Rig Phase 1 — per-stage refit telemetry (ISO timestamps).
     // RigStagesTab reads these to render "stale" / "fresh" pills.
     rigStageLastRunAt: {
@@ -242,6 +252,8 @@ async function saveAndReload(project) {
     'rigStageLastRunAt is non-empty after reload');
   assert(deepEqual(reloaded.rigStageLastRunAt, original.rigStageLastRunAt),
     'rigStageLastRunAt deep-equals original (V3 Re-Rig)');
+  assert(deepEqual(reloaded.springChains, original.springChains),
+    'springChains survives file round-trip');
 
   // ── Empty/null handling — make sure loaded.field is sensible when original is null ──
   const empty = makeFixtureProject();
@@ -324,6 +336,8 @@ async function saveAndReload(project) {
       'projectStore.loadProject hydrates lastInitRigCompletedAt');
     assert(deepEqual(stored.rigStageLastRunAt, original.rigStageLastRunAt),
       'projectStore.loadProject hydrates rigStageLastRunAt');
+    assert(deepEqual(stored.springChains, original.springChains),
+      'projectStore.loadProject hydrates springChains');
     assert(stored.parameters.length === original.parameters.length,
       'projectStore.loadProject hydrates parameters');
     // versionControl bumps mark a stale rigSpec — the live evaluator

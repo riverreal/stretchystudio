@@ -112,6 +112,7 @@ import { migrateVariantVisibleToOpacity } from './migrations/v49_variant_visible
 import { migratePhysicsModifierPerNode } from './migrations/v50_physics_modifier_per_node.js';
 import { migrateDecimalPlacesThree } from './migrations/v51_decimal_places_three.js';
 import { migrateSpringChains } from './migrations/v52_spring_chains.js';
+import { migrateRecoverSpringChains } from './migrations/v53_recover_spring_chains.js';
 import { logger } from '../lib/logger.js';
 
 // CURRENT_SCHEMA_VERSION re-exported above from `./projectSchemaVersion.js`
@@ -920,6 +921,13 @@ const MIGRATIONS = {
   // saves have no field; seed an empty array so save/load is stable.
   52: (project) => {
     migrateSpringChains(project);
+    return project;
+  },
+
+  // v53 — rebuild springChains from per-part physics modifiers when
+  // the sidetable was wiped by a load that never hydrated the field.
+  53: (project) => {
+    migrateRecoverSpringChains(project);
     return project;
   },
 

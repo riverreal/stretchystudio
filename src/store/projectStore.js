@@ -1390,6 +1390,7 @@ export const useProjectStore = create((set, get) => {
       // above already clears them. The body warp's layout sidetable:
       state.project.bodyWarpLayout = null;
       state.project.rigStageLastRunAt = {};
+      state.project.springChains = [];
       // F1 — fresh project resets cursor to canvas centre, matching the
       // v33 migration seed.
       state.project.cursor = {
@@ -1498,6 +1499,12 @@ export const useProjectStore = create((set, get) => {
       // heuristic when the marker is missing.
       state.project.lastInitRigCompletedAt = projectData.lastInitRigCompletedAt ?? null;
       state.project.rigStageLastRunAt = projectData.rigStageLastRunAt ?? {};
+      // Spring-chain authoring records. Pre-v53 this assignment was
+      // missing — load left the in-memory [] and a later save persisted
+      // the empty array while the mesh still had the joints.
+      state.project.springChains = Array.isArray(projectData.springChains)
+        ? projectData.springChains
+        : [];
       // F1 — restore 2D cursor (canvas-space). Falls back to canvas centre
       // when absent (legacy save before saveProject persisted the field).
       {

@@ -124,6 +124,59 @@ export function findSpringChain(project, partId) {
   return project.springChains.find((c) => c && c.partId === partId) ?? null;
 }
 
+const SPRING_RULE_PREFIX = 'PhysicsSetting_SpringChain_';
+
+/**
+ * Rebuild `project.springChains[]` from authored physics modifiers
+ * when the sidetable was dropped (load hydration used to skip the
+ * field; a later save then persisted `[]`).
+ *
+ * @param {object|null|undefined} project
+ * @returns {number} records added
+ */
+export function recoverSpringChains(project) {
+  if (!project || typeof project !== 'object') return 0;
+  if (!Array.isArray(project.springChains)) project.springChains = [];
+  const seen = new Set();
+  for (const c of project.springChains) {
+    if (c?.partId) seen.add(c.partId);
+  }
+  let added = 0;
+  for (const node of project.nodes ?? []) {
+    if (!node || node.type !== 'part' || !Array.isArray(node.modifiers)) continue;
+    if (seen.has(node.id)) continue;
+    /** @type {string[]} */
+    const paramIds = [];
+    let ruleId = null;
+    for (const mod of node.modifiers) {
+      if (!mod || mod.type !== 'physicsModifier') continue;
+      if (typeof mod.ruleId !== 'string' || !mod.ruleId.startsWith(SPRING_RULE_PREFIX)) continue;
+      ruleId = mod.ruleId;
+      const pid = mod.output?.paramId;
+      if (typeof pid === 'string' && pid.startsWith('ParamSpring_')) paramIds.push(pid);
+    }
+    if (!ruleId || paramIds.length === 0) continue;
+    const unique = [...new Set(paramIds)].sort((a, b) => {
+      const ia = Number(a.slice(a.lastIndexOf('_') + 1));
+      const ib = Number(b.slice(b.lastIndexOf('_') + 1));
+      return (Number.isFinite(ia) ? ia : 0) - (Number.isFinite(ib) ? ib : 0);
+    });
+    project.springChains.push({
+      partId: node.id,
+      jointCount: unique.length,
+      axis: SPRING_AXIS_AUTO,
+      lag: DEFAULT_LAG,
+      cinematic: DEFAULT_CINEMATIC,
+      paramIds: unique,
+      physicsRuleId: ruleId,
+      _userAuthored: true,
+    });
+    seen.add(node.id);
+    added += 1;
+  }
+  return added;
+}
+
 /**
  * @param {object|null|undefined} project
  * @param {string} partId
