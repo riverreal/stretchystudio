@@ -806,6 +806,27 @@ import { _warpRestPositions } from '../../src/io/live2d/rig/selectRigSpec.js';
     'canvas-px-under-warp+rigSpec');
   nearAuthored(bboxOf(evalProjectFrameViaDepgraph(project, {})),
     'canvas-px-under-warp kernel-only (no rigSpec)');
+
+  // User disables every lattice (rigid extras). Canvas-px keyforms must
+  // stay canvas-px — not be reprojected as UVs through warp→root.
+  const rigid = JSON.parse(JSON.stringify(project));
+  for (const n of rigid.nodes) {
+    if (n.id !== 'objects' || !Array.isArray(n.modifiers)) continue;
+    for (const m of n.modifiers) {
+      if (m.type === 'lattice' || m.type === 'warp') m.enabled = false;
+    }
+  }
+  const rigidSpec = selectRigSpec(rigid);
+  const rigidAm = rigidSpec.artMeshes.find((m) => m.id === 'objects');
+  assert(rigidAm?.parent?.type === 'root',
+    'all-lattices-disabled: artMesh.parent is root');
+  const rigidKf = Array.from(rigidAm.keyforms[0].vertexPositions);
+  assert(Math.abs(rigidKf[0] - 200) < 1e-3,
+    `all-lattices-disabled: keyform stays canvas-px (got ${rigidKf[0]}, not a UV)`);
+  nearAuthored(bboxOf(evalProjectFrameViaDepgraph(rigid, {}, { rigSpec: rigidSpec })),
+    'all-lattices-disabled+rigSpec');
+  nearAuthored(bboxOf(evalProjectFrameViaDepgraph(rigid, {})),
+    'all-lattices-disabled kernel-only');
 }
 
 // ── Summary ──────────────────────────────────────────────────────

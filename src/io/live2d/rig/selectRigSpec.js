@@ -729,20 +729,17 @@ function _buildArtMeshes({ project, nodeById, warpRestById, rotationRestById, in
       const effectiveParent = stackLeaf.hasModifiers
         ? stackLeaf.effectiveParent
         : cachedParent;
-      // Init Rig persist runs BEFORE the final synthesizeModifierStacks.
-      // A newly armature-bound extras/objects part is harvested in
-      // canvas-px (parent=root), then the synth attaches the body-warp
-      // leaf. modifiers[0] then claims the keyforms are already
-      // warp-local — they are not. Treating canvas-px as 0..1 UVs
-      // flings the mesh off-canvas ("objects disappeared"). If the
-      // live leaf is a warp but the stored verts look like canvas-px,
-      // treat the cached frame as root so the reproject path below
-      // converts them.
+      // Init Rig persist can leave extras/objects keyforms in canvas-px
+      // while modifiers[0] is a body warp. Those verts are root-frame,
+      // not warp-local. Treating them as UVs flings the mesh off-canvas
+      // when a warp is enabled, and when the user disables every lattice
+      // the warp→root reproject does the same (496px read as a UV).
       const hasArmatureMod = Array.isArray(part.modifiers)
         && part.modifiers.some((m) => m && m.type === 'armature');
-      if (hasArmatureMod
-          && effectiveParent?.type === 'warp'
-          && _keyformsLookLikeCanvasPx(runtime.keyforms)) {
+      const keyformsAreCanvasPx = _keyformsLookLikeCanvasPx(runtime.keyforms);
+      if (keyformsAreCanvasPx && effectiveParent?.type === 'root') {
+        cachedParent = { type: 'root', id: null };
+      } else if (hasArmatureMod && effectiveParent?.type === 'warp' && keyformsAreCanvasPx) {
         cachedParent = { type: 'root', id: null };
       }
       const needsReproject = !_parentRefsEqual(cachedParent, effectiveParent);

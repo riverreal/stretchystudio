@@ -235,6 +235,7 @@ export function kernelArtMeshEval(op, ctx) {
   // migrated project; `walkDeformerParentChain` + the matching `build.js`
   // implicit-parent dep-edges are removed together.
   let bufB = null;
+  let didCanvasFinalLift = false;
   for (let i = 0; i < stack.length; i++) {
     const mod = stack[i];
     if (!mod || !isModifierEnabled(mod, requiredMode)) continue;
@@ -306,6 +307,7 @@ export function kernelArtMeshEval(op, ctx) {
         const swap = bufA; bufA = bufB; bufB = swap;
         captureBbox(`mod[${i}] warp-lifted (deformerId=${deformerId})`);
         // Lifted grid output IS canvas-px; chain collapses.
+        didCanvasFinalLift = true;
         break;
       }
       // Fallback: unlifted current-frame grid (broken chain).
@@ -320,6 +322,7 @@ export function kernelArtMeshEval(op, ctx) {
         );
         const swap = bufA; bufA = bufB; bufB = swap;
         captureBbox(`mod[${i}] warp-unlifted (deformerId=${deformerId})`);
+        didCanvasFinalLift = true;
       }
     } else if (mod.type === 'rotation') {
       // Global MATRIX_BUILD bakes the rotation's canvas-final pivot
@@ -347,13 +350,29 @@ export function kernelArtMeshEval(op, ctx) {
       }
       const swap = bufA; bufA = bufB; bufB = swap;
       captureBbox(`mod[${i}] rotation (deformerId=${deformerId}, isCanvasFinal=${!!matState.isCanvasFinal})`);
-      if (matState.isCanvasFinal) break;
+      if (matState.isCanvasFinal) {
+        didCanvasFinalLift = true;
+        break;
+      }
     }
     // Armature modifiers fall through here intentionally. Bone
     // skinning runs as a single post-chain pass below — once per part,
     // using the joint + parent bone WORLD matrices composed from
     // TRANSFORM_COMPOSE outputs. Mirrors the renderer's three-state
     // composition (`renderer/bonePostChainComposition.js`).
+  }
+
+  // Every lattice disabled (user wants a rigid extras/objects mesh):
+  // keyforms may still be warp-local 0..1. With no lift they draw as
+  // ~1px at the origin. Map through the leaf warp's REST chain so the
+  // part stays on-canvas without param-driven deformation.
+  if (!didCanvasFinalLift && !bufferLooksLikeCanvasPx(bufA, len)) {
+    const restLifted = restLiftDisabledWarpLeaf(stack, bufA, bufB, len, ctx);
+    if (restLifted) {
+      bufA = restLifted.bufA;
+      bufB = restLifted.bufB;
+      captureBbox(restLifted.label);
+    }
   }
 
   // Phase 0.D — bone post-chain composition. Caches per-eval bone
@@ -936,4 +955,65 @@ function convertCanvasPxToWarpLocal(buf, len, bbox) {
     buf[i] = (buf[i] - bbox.minX) / w;
     buf[i + 1] = (buf[i + 1] - bbox.minY) / h;
   }
+}
+
+/**
+ * @param {Float32Array} buf
+ * @param {number} len
+ * @param {{minX:number, minY:number, maxX:number, maxY:number}} bbox
+ */
+function convertWarpLocalToCanvasPx(buf, len, bbox) {
+  const w = bbox.maxX - bbox.minX;
+  const h = bbox.maxY - bbox.minY;
+  for (let i = 0; i < len; i += 2) {
+    buf[i] = bbox.minX + buf[i] * w;
+    buf[i + 1] = bbox.minY + buf[i + 1] * h;
+  }
+}
+
+/**
+ * Lift leftover warp-local verts through the first lattice/warp at REST
+ * when the user has disabled every deforming lattice.
+ *
+ * @param {object[]} stack
+ * @param {Float32Array} bufA
+ * @param {Float32Array|null} bufB
+ * @param {number} len
+ * @param {import('../eval.js').EvalContext} ctx
+ * @returns {{bufA: Float32Array, bufB: Float32Array, label: string}|null}
+ */
+function restLiftDisabledWarpLeaf(stack, bufA, bufB, len, ctx) {
+  let leafIdx = -1;
+  for (let i = 0; i < stack.length; i++) {
+    const mod = stack[i];
+    if (mod && (mod.type === 'warp' || mod.type === 'lattice')) {
+      leafIdx = i;
+      break;
+    }
+  }
+  if (leafIdx < 0) return null;
+  const leaf = stack[leafIdx];
+  const deformerId = modifierRefId(leaf);
+  if (typeof deformerId !== 'string' || deformerId.length === 0) return null;
+
+  const chainAbove = [];
+  for (let j = leafIdx + 1; j < stack.length; j++) {
+    const up = stack[j];
+    if (!up || (up.type !== 'warp' && up.type !== 'lattice')) continue;
+    const upId = modifierRefId(up);
+    if (typeof upId === 'string' && upId.length > 0) {
+      chainAbove.push({ type: 'warp', id: upId, enabled: false });
+    }
+  }
+
+  const lift = computePerPartLift(deformerId, chainAbove, ctx, false);
+  if (lift?.lifted) {
+    const out = bufB ?? new Float32Array(len);
+    evalWarpKernelCubism(lift.lifted, lift.gridSize, lift.isQuad, bufA, out, len >> 1);
+    return { bufA: out, bufB: bufA, label: `disabled-leaf rest-lift (deformerId=${deformerId})` };
+  }
+  const bbox = resolveWarpRestBbox(deformerId, lift, ctx);
+  if (!bbox) return null;
+  convertWarpLocalToCanvasPx(bufA, len, bbox);
+  return { bufA, bufB: bufB ?? new Float32Array(len), label: `disabled-leaf rest-bbox (deformerId=${deformerId})` };
 }
