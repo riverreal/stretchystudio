@@ -259,7 +259,13 @@ function assert(cond, name) {
           { type: 'armature', deformerId: 'torso', enabled: true, mode: 3,
             data: { jointBoneId: 'torso', jointBoneRole: 'torso', parentBoneId: 'root' } },
         ],
-        mesh: { vertices: [{ x: 10, y: 20 }, { x: 11, y: 21 }] },
+        mesh: {
+          vertices: [{ x: 10, y: 20 }, { x: 11, y: 21 }],
+          runtime: {
+            bindings: [],
+            keyforms: [{ keyTuple: [], vertexPositions: [400, 300, 410, 310], opacity: 1 }],
+          },
+        },
       },
     ],
   };
@@ -275,6 +281,8 @@ function assert(cond, name) {
     'Test 9: jointBoneId copied from the prior Armature onto the mesh');
   assert(stack.some((m) => m?.type === 'lattice' && m?.objectId === 'BodyXWarp'),
     'Test 9: body-warp lattice seeded from the Armature bind');
+  assert(!part.mesh.runtime,
+    'Test 9: stale canvas-px runtime dropped after gaining a warp leaf');
 }
 
 console.log(`\narmatureModifier: ${passed} passed, ${failed} failed`);

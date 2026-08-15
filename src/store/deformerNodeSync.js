@@ -522,9 +522,13 @@ export function synthesizeModifierStacks(project) {
     const priorFlags = new Map();
     /** @type {object|null} */
     let priorArmature = null;
+    let hadDeformerLeaf = false;
     if (Array.isArray(part.modifiers)) {
       for (const m of part.modifiers) {
         if (m && m.type === 'armature') priorArmature = m;
+        if (m && (m.type === 'lattice' || m.type === 'warp' || m.type === 'rotation')) {
+          hadDeformerLeaf = true;
+        }
         const rid = m && (m.type === 'lattice' ? m.objectId : m.deformerId);
         if (typeof rid === 'string' && rid.length > 0) {
           priorFlags.set(rid, { enabled: m.enabled, mode: m.mode, showInEditor: m.showInEditor });
@@ -762,6 +766,17 @@ export function synthesizeModifierStacks(project) {
       part.modifiers = finalStack;
     } else if ('modifiers' in part) {
       delete part.modifiers;
+    }
+    // Newly attaching a body-warp leaf after a modifier-only Armature
+    // bind: harvest persisted canvas-px keyforms, then this synth
+    // changed the parent to a warp. Drop the stale runtime so
+    // selectRigSpec rebuilds verts in the warp's 0..1 frame instead
+    // of treating canvas-px as UVs (mesh vanishes off-canvas).
+    const gainedWarpLeaf = !hadDeformerLeaf
+      && finalStack.some((m) => m && m.type === 'lattice');
+    if (gainedWarpLeaf) {
+      const meshForRt = getMesh(part, project);
+      if (meshForRt?.runtime) delete meshForRt.runtime;
     }
   }
 }

@@ -687,7 +687,7 @@ function _buildArtMeshes({ project, nodeById, warpRestById, rotationRestById, in
           m0LeafId = typeof m0.deformerId === 'string' ? m0.deformerId : null;
         }
       }
-      const cachedParent = (m0LeafType && typeof m0LeafId === 'string' && m0LeafId.length > 0)
+      let cachedParent = (m0LeafType && typeof m0LeafId === 'string' && m0LeafId.length > 0)
         ? { type: m0LeafType, id: m0LeafId }
         : { type: 'root', id: null };
 
@@ -718,6 +718,22 @@ function _buildArtMeshes({ project, nodeById, warpRestById, rotationRestById, in
       const effectiveParent = stackLeaf.hasModifiers
         ? stackLeaf.effectiveParent
         : cachedParent;
+      // Init Rig persist runs BEFORE the final synthesizeModifierStacks.
+      // A newly armature-bound extras/objects part is harvested in
+      // canvas-px (parent=root), then the synth attaches the body-warp
+      // leaf. modifiers[0] then claims the keyforms are already
+      // warp-local — they are not. Treating canvas-px as 0..1 UVs
+      // flings the mesh off-canvas ("objects disappeared"). If the
+      // live leaf is a warp but the stored verts look like canvas-px,
+      // treat the cached frame as root so the reproject path below
+      // converts them.
+      const hasArmatureMod = Array.isArray(part.modifiers)
+        && part.modifiers.some((m) => m && m.type === 'armature');
+      if (hasArmatureMod
+          && effectiveParent?.type === 'warp'
+          && _keyformsLookLikeCanvasPx(runtime.keyforms)) {
+        cachedParent = { type: 'root', id: null };
+      }
       const needsReproject = !_parentRefsEqual(cachedParent, effectiveParent);
 
       // Observability for the modifier-toggle silent reprojection path
@@ -1263,6 +1279,30 @@ function _rotationNodeToSpec(node, nodeById) {
  *     written rotation deformer nodes. Defensive: chainEval treats
  *     unresolved parents as root, identical to today's behaviour.
  */
+/**
+ * True when persisted art-mesh keyforms are in canvas pixels rather
+ * than a warp's 0..1 local frame. Warp-local extras can sit slightly
+ * outside [0,1]; canvas-px character verts are hundreds of units.
+ *
+ * @param {Array<{vertexPositions?: ArrayLike<number>}>|null|undefined} keyforms
+ * @returns {boolean}
+ */
+function _keyformsLookLikeCanvasPx(keyforms) {
+  if (!Array.isArray(keyforms)) return false;
+  const CANVAS_PX_FLOOR = 4;
+  for (const k of keyforms) {
+    const v = k?.vertexPositions;
+    if (!v) continue;
+    for (let i = 0; i < v.length; i++) {
+      const n = v[i];
+      if (typeof n === 'number' && Number.isFinite(n) && Math.abs(n) > CANVAS_PX_FLOOR) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function _resolveParentRef(parentId, nodeById) {
   if (!parentId) return { type: 'root', id: null };
   const parent = nodeById.get(parentId);

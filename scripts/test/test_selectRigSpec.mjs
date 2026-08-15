@@ -727,6 +727,58 @@ import { _warpRestPositions } from '../../src/io/live2d/rig/selectRigSpec.js';
     'M3.1: armature-only emits modifierChain=[] (M2.2 contract preserved)');
 }
 
+{
+  // Canvas-px runtime keyforms + live body-warp leaf (Init Rig persist
+  // then synthesizeModifierStacks attaches BodyXWarp). Must reproject
+  // to 0..1 instead of treating 400px as a UV.
+  const project = {
+    canvas: { width: 800, height: 600 }, parameters: [],
+    nodes: [
+      {
+        id: 'BodyXWarp', type: 'deformer', deformerKind: 'warp',
+        name: 'BX', parent: null, visible: true,
+        gridSize: { rows: 1, cols: 1 },
+        baseGrid: [0, 0, 800, 0, 0, 600, 800, 600],
+        localFrame: 'canvas-px',
+        bindings: [],
+        keyforms: [{ keyTuple: [], positions: [0, 0, 800, 0, 0, 600, 800, 600], opacity: 1 }],
+      },
+      {
+        id: 'objects', type: 'part', name: 'objects',
+        modifiers: [
+          { type: 'lattice', objectId: 'BodyXWarp', enabled: true, mode: 3 },
+          { type: 'armature', deformerId: 'torso', enabled: true, mode: 3,
+            data: { jointBoneId: 'torso' } },
+        ],
+        mesh: {
+          vertices: [{ x: 200, y: 150 }, { x: 600, y: 150 }, { x: 400, y: 450 }],
+          triangles: [0, 1, 2],
+          uvs: [0.25, 0.25, 0.75, 0.25, 0.5, 0.75],
+          jointBoneId: 'torso',
+          boneWeights: [1, 1, 1],
+          runtime: {
+            bindings: [],
+            keyforms: [{
+              keyTuple: [],
+              vertexPositions: [200, 150, 600, 150, 400, 450],
+              opacity: 1,
+            }],
+          },
+        },
+      },
+    ],
+  };
+  const spec = selectRigSpec(project);
+  const am = spec.artMeshes.find((m) => m.id === 'objects');
+  assert(!!am, 'canvas-px-under-warp: artMesh built');
+  assert(am.parent?.type === 'warp' && am.parent?.id === 'BodyXWarp',
+    'canvas-px-under-warp: parent is the body warp leaf');
+  const local = Array.from(am.keyforms[0].vertexPositions);
+  assert(Math.abs(local[0] - 0.25) < 1e-6, `canvas-px-under-warp: vert 0 x normalised (got ${local[0]})`);
+  assert(Math.abs(local[1] - 0.25) < 1e-6, `canvas-px-under-warp: vert 0 y normalised (got ${local[1]})`);
+  assert(Math.abs(local[2] - 0.75) < 1e-6, `canvas-px-under-warp: vert 1 x normalised (got ${local[2]})`);
+}
+
 // ── Summary ──────────────────────────────────────────────────────
 
 console.log(`selectRigSpec: ${passed} passed, ${failed} failed`);
