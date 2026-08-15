@@ -46,6 +46,7 @@ import { buildEyeContexts } from './cmo3/eyeContexts.js';
 import { emitPerPartRigWarps } from './cmo3/perPartRigWarps.js';
 import { emitRigidFollowWarps } from './cmo3/rigidFollowWarpEmit.js';
 import { emitArtMeshSources } from './cmo3/artMeshSourceEmit.js';
+import { physicsDisabledCategoriesForExport } from './rig/springChain.js';
 
 // ---------- Main generator ----------
 
@@ -165,10 +166,10 @@ export async function generateCmo3(input) {
     // Pre-resolved per-mesh rig warps (Stage 9b). `partId → spec` map.
     // For each mesh whose `partId` is in the map and whose stored
     // keyform count matches the cartesian-product `numKf`, the writer
-    // uses the stored `keyforms[ki].positions` verbatim — skipping the
-    // procedural shiftFn invocation. Misses (absent partId or count
-    // mismatch) fall through to the inline shiftFn path. See
-    // `rig/rigWarpsStore.js` resolveRigWarps.
+    // rebases stored keyform deltas onto the export rest grid —
+    // skipping the procedural shiftFn invocation. Misses (absent
+    // partId or count mismatch) fall through to the inline shiftFn
+    // path. See `rig/rigWarpsStore.js` resolveRigWarps.
     rigWarps = null,
     // Pre-resolved eye-closure parabolas (RULE №4 follow-up Slice 2,
     // 2026-05-23). `{baseParabolaPerSide: Map<'l'|'r', curve>,
@@ -1143,7 +1144,11 @@ export async function generateCmo3(input) {
     meshes, meshSrcIds,
     allDeformerSources,
     allPartSources, rootPart,
-    generatePhysics, physicsRules, physicsDisabledCategories, rigDebugLog,
+    generatePhysics, physicsRules,
+    physicsDisabledCategories: physicsDisabledCategoriesForExport(
+      project, physicsDisabledCategories, { actions },
+    ),
+    rigDebugLog,
   });
   // ==================================================================
   // 7. SERIALIZE + PACK INTO CAFF

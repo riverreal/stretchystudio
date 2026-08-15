@@ -177,6 +177,58 @@ export function recoverSpringChains(project) {
   return added;
 }
 
+/** @param {unknown} id */
+export function isSpringParamId(id) {
+  return typeof id === 'string' && id.startsWith('ParamSpring_');
+}
+
+/**
+ * True when any action already has baked `ParamSpring_*` fcurves.
+ * Idle generate + Bake Physics writes those; the Animation workspace
+ * plays them. Cubism Viewer would otherwise re-run physics3 and
+ * overwrite the bake (smaller, no cinematic).
+ *
+ * @param {object|null|undefined} project
+ * @param {Array<{fcurves?: Array<{rnaPath?: string}>}>|null|undefined} [actions]
+ */
+export function projectHasBakedSpringCurves(project, actions) {
+  const list = Array.isArray(actions) ? actions : (project?.actions ?? []);
+  for (const action of list) {
+    for (const fc of action?.fcurves ?? []) {
+      const path = fc?.rnaPath;
+      if (typeof path === 'string' && path.includes('ParamSpring_')) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Merge UI-disabled physics categories with an automatic `spring`
+ * suppress when baked spring curves will ship with the model.
+ *
+ * @param {object|null|undefined} project
+ * @param {Set<string>|string[]|null|undefined} disabled
+ * @param {{ actions?: Array<object>|null, includeMotions?: boolean }} [opts]
+ * @returns {Set<string>|null}
+ */
+export function physicsDisabledCategoriesForExport(project, disabled, opts = {}) {
+  const set = new Set();
+  if (disabled instanceof Set) {
+    for (const c of disabled) {
+      if (typeof c === 'string' && c.length > 0) set.add(c);
+    }
+  } else if (Array.isArray(disabled)) {
+    for (const c of disabled) {
+      if (typeof c === 'string' && c.length > 0) set.add(c);
+    }
+  }
+  const includeMotions = opts.includeMotions !== false;
+  if (includeMotions && projectHasBakedSpringCurves(project, opts.actions)) {
+    set.add('spring');
+  }
+  return set.size > 0 ? set : null;
+}
+
 /**
  * @param {object|null|undefined} project
  * @param {string} partId

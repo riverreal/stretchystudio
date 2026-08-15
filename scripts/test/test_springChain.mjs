@@ -14,6 +14,8 @@ import {
   cartesianKeyTuples,
   findSpringChain,
   recoverSpringChains,
+  physicsDisabledCategoriesForExport,
+  projectHasBakedSpringCurves,
   removeSpringChain,
   reseedSpringChains,
   setSpringChainCinematic,
@@ -400,6 +402,34 @@ expect('recoverSpringChains rebuilds a wiped sidetable from modifiers', () => {
   assert.equal(chain.jointCount, 3);
   assert.equal(chain.paramIds.length, 3);
   assert.equal(chain.physicsRuleId, springChainRuleId('part_hair'));
+});
+
+expect('projectHasBakedSpringCurves detects ParamSpring fcurves', () => {
+  assert.equal(projectHasBakedSpringCurves({ actions: [] }), false);
+  assert.equal(projectHasBakedSpringCurves({
+    actions: [{ fcurves: [{ rnaPath: 'objects["__params__"].values["ParamAngleX"]' }] }],
+  }), false);
+  assert.equal(projectHasBakedSpringCurves({
+    actions: [{
+      fcurves: [{ rnaPath: 'objects["__params__"].values["ParamSpring_part_hair_2"]' }],
+    }],
+  }), true);
+});
+
+expect('physicsDisabledCategoriesForExport suppresses spring when bake exists', () => {
+  const project = {
+    actions: [{
+      fcurves: [{ rnaPath: 'objects["__params__"].values["ParamSpring_part_hair_0"]' }],
+    }],
+  };
+  const got = physicsDisabledCategoriesForExport(project, ['hair']);
+  assert.ok(got instanceof Set);
+  assert.ok(got.has('hair'));
+  assert.ok(got.has('spring'));
+  const none = physicsDisabledCategoriesForExport({ actions: [] }, null);
+  assert.equal(none, null);
+  const keep = physicsDisabledCategoriesForExport(project, null, { includeMotions: false });
+  assert.equal(keep, null);
 });
 
 expect('v53 migration recovers springChains from modifiers', () => {

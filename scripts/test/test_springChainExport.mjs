@@ -12,7 +12,13 @@ import { strict as assert } from 'node:assert';
 import { generateCmo3 } from '../../src/io/live2d/cmo3writer.js';
 import { resolveRigWarps } from '../../src/io/live2d/rig/rigWarpsStore.js';
 import { addSpringChain, springJointParamId } from '../../src/io/live2d/rig/springChain.js';
-import { resolveAuthoredWarpBindings } from '../../src/io/live2d/cmo3/perPartRigWarps.js';
+import {
+  rebaseKeyformOntoRest,
+  resolveAuthoredWarpBindings,
+} from '../../src/io/live2d/cmo3/perPartRigWarps.js';
+import { generatePhysics3Json } from '../../src/io/live2d/physics3json.js';
+import { gatherPhysicsRules } from '../../src/io/live2d/rig/physicsConfig.js';
+import { physicsDisabledCategoriesForExport } from '../../src/io/live2d/rig/springChain.js';
 
 let passed = 0;
 let failed = 0;
@@ -129,6 +135,16 @@ function toGeneratorInput(project, rigWarps) {
   };
 }
 
+expect('rebaseKeyformOntoRest scales canvas-px deltas into 0..1', () => {
+  const storedRest = new Float64Array([0, 0, 20, 0, 0, 40, 20, 40]);
+  const storedKf = new Float64Array([2, 0, 22, 0, 4, 40, 24, 40]);
+  const exportRest = new Float64Array([0.1, 0.2, 0.3, 0.2, 0.1, 0.6, 0.3, 0.6]);
+  const got = rebaseKeyformOntoRest(storedKf, storedRest, exportRest);
+  assert.ok(Math.abs(got[0] - 0.12) < 1e-9, `x0 ${got[0]}`);
+  assert.ok(Math.abs(got[1] - 0.2) < 1e-9, `y0 ${got[1]}`);
+  assert.ok(Math.abs(got[4] - 0.14) < 1e-9, `x2 ${got[4]}`);
+});
+
 expect('resolveAuthoredWarpBindings ignores non-authored warps', () => {
   const stored = {
     bindings: [{ parameterId: 'ParamSpring_x_0', keys: [-1, 0, 1] }],
@@ -196,6 +212,46 @@ await expectAsync('generateCmo3 with a spring chain binds ParamSpring_* and keep
     if (rest.positions[i] !== swung.positions[i]) { moved = true; break; }
   }
   assert.ok(moved, 'stored spring keyforms are not all rest');
+  for (let i = 0; i < swung.positions.length; i++) {
+    const v = swung.positions[i];
+    assert.ok(v > -0.5 && v < 1.5, `exported spring keyform stays in parent 0..1 (got ${v})`);
+  }
+});
+
+expect('physics3 omits spring rules when the idle already baked ParamSpring curves', () => {
+  const project = makeHairProject();
+  const added = addSpringChain(project, 'part_hair', { jointCount: 3 });
+  assert.equal(added.ok, true, added.ok ? '' : added.reason);
+  const springId = springJointParamId('part_hair', 2);
+  project.actions = [{
+    id: 'idle',
+    name: 'Idle',
+    fcurves: [{ rnaPath: `objects["__params__"].values["${springId}"]`, keyframes: [] }],
+  }];
+  const rules = gatherPhysicsRules(project);
+  assert.ok(rules.some((r) => r.category === 'spring'), 'project still has a spring rule');
+  const withBake = generatePhysics3Json({
+    paramDefs: project.parameters,
+    meshes: [{ tag: 'back hair' }],
+    rules,
+    disabledCategories: physicsDisabledCategoriesForExport(project, null),
+  });
+  assert.equal(
+    withBake.PhysicsSettings.some((s) => String(s.Id).includes('SpringChain')),
+    false,
+    'baked springs → no PhysicsSetting_SpringChain in physics3',
+  );
+  const live = generatePhysics3Json({
+    paramDefs: project.parameters,
+    meshes: [{ tag: 'back hair' }],
+    rules,
+    disabledCategories: physicsDisabledCategoriesForExport(project, null, { includeMotions: false }),
+  });
+  assert.equal(
+    live.PhysicsSettings.some((s) => String(s.Id).includes('SpringChain')),
+    true,
+    'model-only export keeps spring physics',
+  );
 });
 
 console.log(`springChainExport: ${passed} passed, ${failed} failed`);

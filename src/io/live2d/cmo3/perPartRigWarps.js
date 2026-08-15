@@ -23,9 +23,10 @@
  *     Eye parts pass an extra `meshCtx` with the shared eye-closure
  *     `curvePoints` so all three eye parts collapse to the same line.
  *
- *   - **Stored** (entry in `rigWarps`, Stage 9b) — keyform positions
- *     come from the stored `keyforms[ki].positions` verbatim. Bypasses
- *     the procedural shiftFn; same XML shape.
+ *   - **Stored** (entry in `rigWarps`, Stage 9b / spring) — keyform
+ *     *deltas* come from the stored `keyforms[ki].positions`, rebased
+ *     onto the export rest grid (parent 0..1). Bypasses the procedural
+ *     shiftFn; same XML shape.
  *
  *   - **Unbound** — single rest keyform on a no-op `ParamOpacity[1.0]`
  *     binding. Lets the warp exist as a rigid pass-through container
@@ -88,6 +89,73 @@ export function resolveAuthoredWarpBindings(stored, paramDefs) {
     bindings.push({ pid, keys: b.keys.slice(), desc: b.parameterId });
   }
   return { bindings, shiftFn: null };
+}
+
+/**
+ * Transfer a stored keyform onto the export rest grid by copying
+ * per-point deltas, scaled by each axis's rest span.
+ *
+ * Stored spring keyforms live in the warp's authoring frame (often
+ * canvas-px, sometimes an older 0..1 rest). Export `restGrid` is
+ * always parent 0..1. A verbatim copy either explodes the mesh or
+ * crushes the swing; this keeps the authored motion as a fraction
+ * of the parent warp.
+ *
+ * @param {ArrayLike<number>|null|undefined} storedKf
+ * @param {ArrayLike<number>|null|undefined} storedRest
+ * @param {ArrayLike<number>} exportRest
+ * @returns {Float64Array}
+ */
+export function rebaseKeyformOntoRest(storedKf, storedRest, exportRest) {
+  const n = exportRest.length;
+  const out = new Float64Array(exportRest);
+  if (!storedKf || !storedRest || storedKf.length < n || storedRest.length < n) {
+    return out;
+  }
+  let sMinX = Infinity;
+  let sMaxX = -Infinity;
+  let sMinY = Infinity;
+  let sMaxY = -Infinity;
+  let eMinX = Infinity;
+  let eMaxX = -Infinity;
+  let eMinY = Infinity;
+  let eMaxY = -Infinity;
+  for (let i = 0; i < n; i += 2) {
+    const sx = storedRest[i];
+    const sy = storedRest[i + 1];
+    const ex = exportRest[i];
+    const ey = exportRest[i + 1];
+    if (sx < sMinX) sMinX = sx;
+    if (sx > sMaxX) sMaxX = sx;
+    if (sy < sMinY) sMinY = sy;
+    if (sy > sMaxY) sMaxY = sy;
+    if (ex < eMinX) eMinX = ex;
+    if (ex > eMaxX) eMaxX = ex;
+    if (ey < eMinY) eMinY = ey;
+    if (ey > eMaxY) eMaxY = ey;
+  }
+  const sSpanX = sMaxX - sMinX;
+  const sSpanY = sMaxY - sMinY;
+  const eSpanX = eMaxX - eMinX;
+  const eSpanY = eMaxY - eMinY;
+  const scaleX = sSpanX > 1e-9 ? eSpanX / sSpanX : 1;
+  const scaleY = sSpanY > 1e-9 ? eSpanY / sSpanY : 1;
+  for (let i = 0; i < n; i += 2) {
+    out[i] = exportRest[i] + (storedKf[i] - storedRest[i]) * scaleX;
+    out[i + 1] = exportRest[i + 1] + (storedKf[i + 1] - storedRest[i + 1]) * scaleY;
+  }
+  return out;
+}
+
+function storedRestGrid(storedRigWarp, exportRest) {
+  const base = storedRigWarp?.baseGrid;
+  if (base && base.length === exportRest.length) return base;
+  const restKf = storedRigWarp?.keyforms?.find((k) =>
+    Array.isArray(k?.keyTuple) && k.keyTuple.length > 0 && k.keyTuple.every((v) => v === 0));
+  if (restKf?.positions && restKf.positions.length === exportRest.length) {
+    return restKf.positions;
+  }
+  return exportRest;
 }
 
 /**
@@ -525,6 +593,9 @@ export function emitPerPartRigWarps(ctx, opts) {
         expectedPts: warpGridPts * 2,
       });
     }
+    const storedRestForRebase = _useStoredRigWarp
+      ? storedRestGrid(storedRigWarp, restGrid)
+      : restGrid;
 
     for (let ki = 0; ki < numKf; ki++) {
       // Generate grid positions: stored (Stage 9b / spring) > shiftFn for
@@ -532,7 +603,11 @@ export function emitPerPartRigWarps(ctx, opts) {
       // the same XML path below — Stage 9b is reader-only, the writer
       // shape is unchanged.
       const pos = _useStoredRigWarp
-        ? new Float64Array(storedRigWarp.keyforms[ki].positions)
+        ? rebaseKeyformOntoRest(
+          storedRigWarp.keyforms[ki].positions,
+          storedRestForRebase,
+          restGrid,
+        )
         : (hasBinding && rigWarpKeyValues && typeof activeBinding.shiftFn === 'function')
           ? activeBinding.shiftFn(restGrid, gW, gH, rigWarpKeyValues[ki], gxSpan, gySpan, meshCtx)
           : new Float64Array(restGrid);

@@ -19,6 +19,7 @@ import { buildMotion3, PRESETS, resultToSsAction } from './idle/builder.js';
 import { buildParameterSpec } from './rig/paramSpec.js';
 import { resolveMaskConfigs } from './rig/maskConfigs.js';
 import { gatherPhysicsRules } from './rig/physicsConfig.js';
+import { physicsDisabledCategoriesForExport } from './rig/springChain.js';
 import { MODIFIER_MODE_RENDER } from '../../store/migrations/v21_modifier_mode_flags.js';
 import { sanitisePartName } from '../../lib/partId.js';
 import { resolveBoneConfig } from './rig/boneConfig.js';
@@ -286,9 +287,11 @@ export async function exportLive2D(project, images, opts = {}) {
   let physicsFile = null;
   if (generatePhysics) {
     onProgress('Generating physics...');
-    const disabledSet = physicsDisabledCategories
-      ? new Set(physicsDisabledCategories)
-      : null;
+    const disabledSet = physicsDisabledCategoriesForExport(
+      project,
+      physicsDisabledCategories,
+      { includeMotions: exportMotions },
+    );
     const physics3 = generatePhysics3Json({
       paramDefs: paramSpec,
       meshes: meshParts.map(p => ({ tag: matchTag(p.name || p.id) })),
@@ -583,7 +586,10 @@ export async function exportLive2DProject(project, images, opts = {}) {
       modelName,
       generateRig,
       generatePhysics,
-      physicsDisabledCategories,
+      physicsDisabledCategories: physicsDisabledCategoriesForExport(
+        project,
+        physicsDisabledCategories,
+      ),
       maskConfigs: resolveMaskConfigs(project),
       physicsRules: gatherPhysicsRules(project, { requiredMode: MODIFIER_MODE_RENDER }),
       bakedKeyformAngles: resolveBoneConfig(project).bakedKeyformAngles,
