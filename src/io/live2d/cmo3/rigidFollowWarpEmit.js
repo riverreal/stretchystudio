@@ -29,13 +29,17 @@ import {
  * @param {Map<string, {gridMinX: number, gridMinY: number, gridW: number, gridH: number}>} opts.rigWarpBbox
  * @param {any} opts.rootPart
  * @param {Array<{pid: string, tag: string}>} opts.allDeformerSources
+ * @param {{specs?: Array<object>}|null} [opts.bodyWarpChain]
  */
 export function emitRigidFollowWarps(ctx, opts) {
   const {
     x, meshes, perMesh, generateRig, project,
     pidDeformerRoot, pidCoord, paramDefs, rigCollector,
   } = ctx;
-  const { meshWarpDeformerGuids, rigWarpBbox, rootPart, allDeformerSources } = opts;
+  const {
+    meshWarpDeformerGuids, rigWarpBbox, rootPart, allDeformerSources,
+    bodyWarpChain = null,
+  } = opts;
 
   if (!generateRig || !project?.nodes) return;
 
@@ -77,6 +81,7 @@ export function emitRigidFollowWarps(ctx, opts) {
     project,
     meshes: extras,
     paramDefs,
+    bodyWarpChain: bodyWarpChain ?? ctx.bodyWarpChain ?? null,
   });
   const elapsed = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - t0;
   if (specs.length === 0) {
@@ -85,11 +90,27 @@ export function emitRigidFollowWarps(ctx, opts) {
     });
     return;
   }
+  const rest0 = specs[0]?.baseGrid;
+  let peakMove = 0;
+  for (const kf of specs[0]?.keyforms ?? []) {
+    const pos = kf.positions;
+    if (!rest0 || !pos) continue;
+    for (let i = 0; i < pos.length && i < rest0.length; i += 2) {
+      const d = Math.hypot(pos[i] - rest0[i], pos[i + 1] - rest0[i + 1]);
+      if (d > peakMove) peakMove = d;
+    }
+  }
   logger.info('rigidFollowWarpEmit', `emitted ${specs.length} root follow warp(s)`, {
     extras: specs.length,
     keyforms: specs[0]?.keyforms?.length ?? 0,
+    peakMovePx: Math.round(peakMove * 10) / 10,
     ms: Math.round(elapsed),
   });
+  if (peakMove < 0.5) {
+    logger.warn('rigidFollowWarpEmit', 'follow keyforms are nearly identity — extras will look static in Cubism', {
+      peakMovePx: peakMove,
+    });
+  }
 
   const pidByParamId = new Map();
   for (const p of paramDefs ?? []) {

@@ -1044,6 +1044,7 @@ export async function generateCmo3(input) {
     rigWarpBbox,
     rootPart,
     allDeformerSources,
+    bodyWarpChain: _bodyChain,
   });
 
   emitPerPartRigWarps(ctx, {

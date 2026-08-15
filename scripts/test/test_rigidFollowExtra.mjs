@@ -17,7 +17,12 @@ import {
   bboxFromVerts,
   restQuadFromBbox,
   buildRigidFollowWarpSpecs,
+  sampleBodyCageXformsFromSpecs,
+  interpolateWarpSpecGrid,
+  localRigidFromLiftedCages,
+  liftBodyCagesAtParams,
 } from '../../src/io/live2d/rig/rigidFollowExtra.js';
+import { buildBodyWarpChain } from '../../src/io/live2d/rig/bodyWarp.js';
 
 let passed = 0;
 let failed = 0;
@@ -232,6 +237,86 @@ assertEq(findInnermostBodyWarpId({ nodes: [] }), null, 'empty project → null')
     paramDefs: [{ id: 'ParamBodyAngleX', pid: 'px' }],
   });
   assertEq(specs, [], 'empty project → no specs');
+}
+
+// ── chain-spec sampling (no depgraph) produces a moving follow warp ──
+
+{
+  const bodyZ = {
+    id: 'BodyWarpZ',
+    parent: { type: 'root', id: null },
+    gridSize: { rows: 1, cols: 1 },
+    bindings: [{ parameterId: 'ParamBodyAngleZ', keys: [-10, 0, 10], interpolation: 'LINEAR' }],
+    keyforms: [
+      { keyTuple: [-10], positions: new Float64Array([-10, 0, 0, 0, -10, 10, 0, 10]) },
+      { keyTuple: [0], positions: new Float64Array([0, 0, 10, 0, 0, 10, 10, 10]) },
+      { keyTuple: [10], positions: new Float64Array([10, 0, 20, 0, 10, 10, 20, 10]) },
+    ],
+  };
+  const rest = interpolateWarpSpecGrid(bodyZ, { ParamBodyAngleZ: 0 });
+  const live = interpolateWarpSpecGrid(bodyZ, { ParamBodyAngleZ: 10 });
+  assertClose(rest[0], 0, 'interp rest x');
+  assertClose(live[0], 10, 'interp +10 x');
+
+  const xforms = sampleBodyCageXformsFromSpecs([bodyZ], [
+    { ParamBodyAngleZ: 0 },
+    { ParamBodyAngleZ: 10 },
+  ]);
+  assert(xforms[0] != null, 'rest xf exists');
+  assertClose(xforms[0].lx - xforms[0].rx, 0, 'rest: no translation');
+  assertClose(xforms[1].lx - xforms[1].rx, 10, 'Z=+10: cage translates +10');
+
+  const project = {
+    nodes: [{
+      id: 'objects',
+      type: 'part',
+      name: 'objects',
+      modifiers: [{ type: 'armature', enabled: true }],
+    }],
+  };
+  const follow = buildRigidFollowWarpSpecs({
+    project,
+    meshes: [{ partId: 'objects', name: 'objects', vertices: [100, 100, 140, 100, 140, 140, 100, 140] }],
+    paramDefs: [{ id: 'ParamBodyAngleZ', pid: 'pz' }],
+    bodyWarpChain: { specs: [bodyZ] },
+  });
+  assertEq(follow.length, 1, 'chain path emits a follow warp');
+  const restKf = follow[0].keyforms.find((k) => k.keyTuple[0] === 0);
+  const plusKf = follow[0].keyforms.find((k) => k.keyTuple[0] === 10);
+  assert(restKf && plusKf, 'Z=0 and Z=+10 keyforms present');
+  assertClose(plusKf.positions[0] - restKf.positions[0], 10, 'follow quad rides the body cage +10px');
+  assert(
+    Math.abs(plusKf.positions[0] - restKf.positions[0]) > 1,
+    'follow keyforms are not identity (the Cubism-static bug)',
+  );
+}
+
+// ── local torso sample follows BodyX more than full-cage Kabsch ──
+
+{
+  const chain = buildBodyWarpChain({
+    perMesh: [{ vertices: [200, 100, 600, 100, 600, 700, 200, 700] }],
+    canvasW: 800, canvasH: 800,
+    bodyAnalysis: null,
+    hasParamBodyAngleX: true,
+  });
+  const dicts = [
+    { ParamBodyAngleX: 0, ParamBodyAngleY: 0, ParamBodyAngleZ: 0, ParamBreath: 0 },
+    { ParamBodyAngleX: 10, ParamBodyAngleY: 0, ParamBodyAngleZ: 0, ParamBreath: 0 },
+  ];
+  const cages = liftBodyCagesAtParams(chain.specs, dicts);
+  assert(cages != null, 'real chain lifts cages');
+  const u = chain.canvasToBodyXX(400);
+  const v = chain.canvasToBodyXY(250);
+  const local = localRigidFromLiftedCages(
+    cages.restCage, cages.liveCages[1], cages.leaf.gridSize, u, v,
+  );
+  const kabsch = sampleBodyCageXformsFromSpecs(chain.specs, dicts)[1];
+  assert(local != null, 'local xf at torso UV');
+  const localDx = Math.abs(local.lx - local.rx);
+  const kabschDx = Math.abs(kabsch.lx - kabsch.rx);
+  assert(localDx > 5, `local BodyX follow is visible (${localDx.toFixed(1)}px)`);
+  assert(localDx > kabschDx, 'local torso sample moves more than planted-feet Kabsch');
 }
 
 console.log(`rigidFollowExtra: ${passed} passed, ${failed} failed`);
